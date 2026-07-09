@@ -1,3 +1,8 @@
 *.log
-__pycache__
+__pycache__/
+*.py[cod]
+.pytest_cache/
+*.egg-info/
 noSync/
+tests/assets/*.mp4
+tests/assets/*.avi

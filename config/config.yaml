@@ -1,0 +1,70 @@
+camera:
+  resolution: [320, 240]       # capture resolution — also used for calibration preview
+  awb_enable: true             # auto white balance
+  ae_enable: true              # auto exposure
+  analogue_gain: 3.0           # 1.0–5.0; increase for brighter image in dim rooms
+  exposure_time: 10000         # microseconds
+
+perspective:
+  # warp target resolution — keep small for Pi Zero 2W performance
+  # 160×90 gives ~4ms warp vs ~15ms at 320×180; increase only if color quality is poor
+  output_resolution: [160, 90]
+  # four corners of TV in the raw camera frame: top-left, top-right, bottom-right, bottom-left
+  points:
+    - [106, 35]
+    - [238, 49]
+    - [234, 121]
+    - [98, 107]
+
+color:
+  # fraction of output frame height/width to sample from each edge
+  edge_depth: 0.05
+  # set true to bypass full warpPerspective — pre-computes cv2.remap maps for edge
+  # strips only (~5x fewer pixels). Requires use_remap-compatible EdgeColorExtractor init.
+  use_remap: false
+  saturation_boost: 1.3        # 1.0 = no change, >1.0 = more vivid
+  brightness_floor: 10         # per-channel minimum (0–255); prevents LEDs going fully dark
+  gamma: 2.2                   # folded into a uint8 LUT at startup — zero per-frame cost
+  spatial_blur_sigma: 1.0      # gaussian blur across LED strip (0.0 = off)
+  smoothing:
+    method: ema                # ema | none
+    alpha: 0.3                 # 0.1 = slow/smooth transitions, 1.0 = instant/sharp
+
+wled:
+  ip: "192.168.1.77"
+  port: 21324
+  protocol: drgb               # drgb | warls
+                               # drgb: 3 bytes/LED from LED 0 — simpler, slightly smaller packet
+                               # warls: 4 bytes/LED with index — supports sparse updates
+  timeout: 255                 # WLED realtime timeout (seconds, 1–255)
+  led_layout:                  # physical LEDs per side — strip runs top→right→bottom→left
+    top: 84
+    right: 50
+    bottom: 84
+    left: 50
+
+processing:
+  target_fps: 24
+  log_level: INFO              # DEBUG | INFO | WARNING | ERROR
+  log_file: app.log
+  benchmark_mode: false        # logs per-stage timing every frame when true
+  opencv_threads: 1            # cv2.setNumThreads — 1 is optimal for small ops on Pi Zero 2W
+
+simulator:
+  camera:
+    enabled: false
+    source: synthetic          # video | image | synthetic
+    video_path: tests/assets/sample.mp4
+    image_path: tests/assets/sample.jpg
+    synthetic:
+      pattern: gradient        # gradient | colorbar | solid | noise
+      color: [255, 0, 0]       # used when pattern=solid
+    loop: true
+    fps: 24                    # playback speed for video and synthetic sources
+
+  wled:
+    enabled: false
+    display: window            # window | console | none
+    window_title: "WLED Simulator"
+    window_scale: 4            # pixel size of each LED square in the display window
+    show_frame_preview: true   # show corrected TV frame in the center of the LED ring
