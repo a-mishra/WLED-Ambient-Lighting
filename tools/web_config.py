@@ -92,12 +92,20 @@ _HTML_PAGE = r"""<!DOCTYPE html>
   .row2 .field { flex: 1; min-width: 120px; }
   details { margin-top: 8px; }
   .cal-points { font-family: monospace; font-size: 0.8rem; }
+  .cal-manual { background: #16213e; border-radius: 8px; padding: 12px; margin-top: 12px; }
+  .cal-manual h3 { margin: 0 0 8px; font-size: 0.9rem; color: #aaa; }
+  .cal-manual table { width: 100%; max-width: 420px; border-collapse: collapse; font-size: 0.85rem; }
+  .cal-manual th, .cal-manual td { padding: 6px 8px; text-align: left; border-bottom: 1px solid #333; }
+  .cal-manual input { width: 72px; padding: 6px; border-radius: 4px; border: 1px solid #444; background: #0f3460; color: #eee; }
+  .cal-manual button { background: #533483; color: #fff; border: none; padding: 8px 14px; border-radius: 4px; cursor: pointer; margin-top: 8px; }
+  .form-note { font-size: 0.85rem; color: #aaa; margin: 8px 0; }
 </style>
 </head>
 <body>
 <header><h1>WLED Ambient Lighting — Web Config</h1></header>
 <nav id="tabs">
   <button class="active" data-tab="preview">Preview</button>
+  <button data-tab="perspective">Perspective</button>
   <button data-tab="camera">Camera</button>
   <button data-tab="color">Color</button>
   <button data-tab="wled">WLED</button>
@@ -128,7 +136,19 @@ _HTML_PAGE = r"""<!DOCTYPE html>
     <div class="meta" id="preview-meta">Click Capture to load preview.</div>
     <div class="cal-points" id="cal-clicked">Clicked (0/4): []</div>
     <div class="cal-points" id="cal-saved"></div>
+    <div class="cal-manual">
+      <h3>Manual corner coordinates (pixels in raw frame)</h3>
+      <table>
+        <tr><th>Corner</th><th>X</th><th>Y</th></tr>
+        <tr><td>1 — Top-left</td><td><input type="number" id="cal-pt-0-x" min="0"></td><td><input type="number" id="cal-pt-0-y" min="0"></td></tr>
+        <tr><td>2 — Top-right</td><td><input type="number" id="cal-pt-1-x" min="0"></td><td><input type="number" id="cal-pt-1-y" min="0"></td></tr>
+        <tr><td>3 — Bottom-right</td><td><input type="number" id="cal-pt-2-x" min="0"></td><td><input type="number" id="cal-pt-2-y" min="0"></td></tr>
+        <tr><td>4 — Bottom-left</td><td><input type="number" id="cal-pt-3-x" min="0"></td><td><input type="number" id="cal-pt-3-y" min="0"></td></tr>
+      </table>
+      <button type="button" onclick="applyManualPoints()">Apply to markers</button>
+    </div>
   </div>
+  <div id="tab-perspective" class="tab"><div class="form-section" id="form-perspective"></div></div>
   <div id="tab-camera" class="tab"><div class="form-section" id="form-camera"></div></div>
   <div id="tab-color" class="tab"><div class="form-section" id="form-color"></div></div>
   <div id="tab-wled" class="tab"><div class="form-section" id="form-wled"></div></div>
@@ -208,6 +228,37 @@ function updateCalLabels() {
   const saved = config.perspective?.points || [];
   document.getElementById('cal-saved').textContent =
     'Saved in config: ' + JSON.stringify(saved);
+  syncManualInputsFromPoints();
+}
+function syncManualInputsFromPoints() {
+  const pts = clickPoints.length === 4 ? clickPoints : (config.perspective?.points || []);
+  for (let i = 0; i < 4; i++) {
+    const xEl = document.getElementById('cal-pt-' + i + '-x');
+    const yEl = document.getElementById('cal-pt-' + i + '-y');
+    if (!xEl || !yEl) continue;
+    if (pts[i]) { xEl.value = pts[i][0]; yEl.value = pts[i][1]; }
+    else { xEl.value = ''; yEl.value = ''; }
+  }
+}
+function applyManualPoints() {
+  const pts = [];
+  const fw = config.camera?.resolution?.[0] || 320;
+  const fh = config.camera?.resolution?.[1] || 240;
+  for (let i = 0; i < 4; i++) {
+    const x = parseInt(document.getElementById('cal-pt-' + i + '-x').value, 10);
+    const y = parseInt(document.getElementById('cal-pt-' + i + '-y').value, 10);
+    if (Number.isNaN(x) || Number.isNaN(y)) {
+      showBanner('Enter valid X/Y for corner ' + (i + 1), 'err'); return;
+    }
+    if (x < 0 || x >= fw || y < 0 || y >= fh) {
+      showBanner('Corner ' + (i + 1) + ' must be within 0..' + (fw - 1) + ', 0..' + (fh - 1), 'err'); return;
+    }
+    pts.push([x, y]);
+  }
+  clickPoints = pts;
+  drawMarkers();
+  updateCalLabels();
+  showBanner('Manual points applied — click Save calibration');
 }
 function renderPreviewMeta(meta) {
   const el = document.getElementById('preview-meta');
@@ -289,40 +340,69 @@ async function saveCalibration() {
     showBanner('Calibration saved');
   } catch (e) { showBanner(JSON.stringify(e.data?.fields || e.data) || 'Save failed', 'err'); }
 }
+function fieldId(section, key) { return section + '-' + key.replace(/\./g, '-'); }
 function fieldHtml(section, key, spec, value) {
-  const id = section + '-' + key.replace(/\./g, '-');
+  const id = fieldId(section, key);
   const label = spec.label || key;
   if (spec.type === 'bool') return `<div class="field"><label><input type="checkbox" id="${id}" ${value ? 'checked' : ''}> ${label}</label></div>`;
   if (spec.type === 'enum') return `<div class="field"><label>${label}</label><select id="${id}">${spec.options.map(o => `<option value="${o}" ${o===value?'selected':''}>${o}</option>`).join('')}</select></div>`;
   if (spec.type === 'resolution') { const v = value || [320, 240]; return `<div class="field row2"><div class="field"><label>${label} W</label><input type="number" id="${id}-w" value="${v[0]}"></div><div class="field"><label>H</label><input type="number" id="${id}-h" value="${v[1]}"></div></div>`; }
   if (spec.type === 'float' && spec.max !== undefined) return `<div class="field"><label>${label}: <span id="${id}-v">${value}</span></label><input type="range" id="${id}" min="${spec.min}" max="${spec.max}" step="${spec.step||0.1}" value="${value}" oninput="document.getElementById('${id}-v').textContent=this.value"></div>`;
-  return `<div class="field"><label>${label}</label><input type="${spec.type === 'int' ? 'number' : 'text'}" id="${id}" value="${value ?? ''}"></div>`;
+  return `<div class="field"><label>${label}</label><input type="${spec.type === 'int' ? 'number' : 'text'}" id="${id}" value="${value ?? ''}"${spec.min !== undefined ? ` min="${spec.min}"` : ''}${spec.max !== undefined ? ` max="${spec.max}"` : ''}></div>`;
+}
+function readField(spec, id) {
+  if (spec.type === 'bool') return document.getElementById(id).checked;
+  if (spec.type === 'resolution') return [parseInt(document.getElementById(id + '-w').value, 10), parseInt(document.getElementById(id + '-h').value, 10)];
+  if (spec.type === 'float') return parseFloat(document.getElementById(id).value);
+  if (spec.type === 'int') return parseInt(document.getElementById(id).value, 10);
+  return document.getElementById(id).value;
+}
+function updateWledTotal() {
+  const el = document.getElementById('wled-total');
+  if (!el) return;
+  let sum = 0;
+  for (const side of ['top', 'right', 'bottom', 'left']) {
+    const input = document.getElementById(fieldId('wled', 'led_layout.' + side));
+    if (input) sum += parseInt(input.value, 10) || 0;
+  }
+  el.textContent = 'Total LEDs: ' + sum + ' (must match WLED firmware LED count)';
+}
+function afterBuildForm(section) {
+  if (section === 'wled') {
+    updateWledTotal();
+    for (const side of ['top', 'right', 'bottom', 'left']) {
+      const input = document.getElementById(fieldId('wled', 'led_layout.' + side));
+      if (input) input.addEventListener('input', updateWledTotal);
+    }
+  }
 }
 function buildForm(section, schema, data, containerId) {
   let html = `<h2>${section.charAt(0).toUpperCase() + section.slice(1)}</h2>`;
+  if (section === 'perspective') {
+    html += '<p class="form-note">TV corner points are set on the <strong>Preview</strong> tab (click or manual X/Y).</p>';
+  }
   for (const [key, spec] of Object.entries(schema)) {
     if (spec.type) html += fieldHtml(section, key, spec, data[key]);
-    else { html += `<h3>${key}</h3>`; for (const [subkey, subspec] of Object.entries(spec)) html += fieldHtml(section, key + '.' + subkey, subspec, (data[key]||{})[subkey]); }
+    else {
+      html += `<h3>${key.replace(/_/g, ' ')}</h3>`;
+      for (const [subkey, subspec] of Object.entries(spec)) {
+        html += fieldHtml(section, key + '.' + subkey, subspec, (data[key] || {})[subkey]);
+      }
+    }
   }
+  if (section === 'wled') html += '<p id="wled-total" class="form-note"></p>';
   html += `<button onclick="saveSection('${section}')">Save ${section}</button>`;
   document.getElementById(containerId).innerHTML = html;
+  afterBuildForm(section);
 }
 function readSection(section, schema) {
   const out = {};
   for (const [key, spec] of Object.entries(schema)) {
-    if (spec.type) {
-      const id = section + '-' + key.replace(/\./g, '-');
-      if (spec.type === 'bool') out[key] = document.getElementById(id).checked;
-      else if (spec.type === 'resolution') out[key] = [parseInt(document.getElementById(id + '-w').value), parseInt(document.getElementById(id + '-h').value)];
-      else if (spec.type === 'float') out[key] = parseFloat(document.getElementById(id).value);
-      else if (spec.type === 'int') out[key] = parseInt(document.getElementById(id).value);
-      else out[key] = document.getElementById(id).value;
-    } else {
+    if (spec.type) out[key] = readField(spec, fieldId(section, key));
+    else {
       out[key] = {};
-      for (const subkey of Object.keys(spec)) {
-        const id = section + '-' + key + '-' + subkey;
-        if (spec[subkey].type === 'int') out[key][subkey] = parseInt(document.getElementById(id).value);
-        else out[key][subkey] = document.getElementById(id).value;
+      for (const [subkey, subspec] of Object.entries(spec)) {
+        out[key][subkey] = readField(subspec, fieldId(section, key + '.' + subkey));
       }
     }
   }
@@ -335,7 +415,9 @@ async function saveSection(section) {
     const res = await api('PATCH', '/api/config', body);
     config = res.config;
     if (res.warnings?.length) showBanner(res.warnings.join(' '), 'warn');
-    else showBanner(section + ' saved — click Reprocess on Preview tab to update images');
+    else if (section === 'perspective' || section === 'camera' || section === 'color' || section === 'wled') {
+      showBanner(section + ' saved — click Reprocess on Preview tab (restart main.py for live output)');
+    } else showBanner(section + ' saved');
   } catch (e) { showBanner(JSON.stringify(e.data?.fields || e.data) || 'Save failed', 'err'); }
 }
 document.getElementById('tabs').addEventListener('click', (ev) => {
@@ -350,10 +432,12 @@ async function init() {
     const res = await api('GET', '/api/config');
     config = res.config;
     clearPoints(false);
+    buildForm('perspective', res.schema.perspective, config.perspective, 'form-perspective');
     buildForm('camera', res.schema.camera, config.camera, 'form-camera');
     buildForm('color', res.schema.color, config.color, 'form-color');
     buildForm('wled', res.schema.wled, config.wled, 'form-wled');
     buildForm('processing', res.schema.processing, config.processing, 'form-processing');
+    syncManualInputsFromPoints();
     const meta = await api('GET', '/api/preview/meta');
     if (meta.has_cache) { refreshImages(); renderPreviewMeta(meta); }
     else { renderPreviewMeta(meta); updateCalLabels(); }

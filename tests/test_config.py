@@ -65,8 +65,8 @@ def test_led_layout_non_negative():
 
 def test_strip_routing_defaults():
     cfg = load_config(CONFIG_PATH)
-    assert cfg["wled"].get("strip_start", "top_left") == "top_left"
-    assert cfg["wled"].get("strip_direction", "cw") == "cw"
+    assert cfg["wled"]["strip_start"] in ("top_left", "top_right", "bottom_right", "bottom_left")
+    assert cfg["wled"]["strip_direction"] in ("cw", "ccw")
 
 
 def test_output_resolution_is_two_ints():

@@ -12,6 +12,7 @@ from ambient.config_schema import (
   ConfigValidationError,
   apply_patch,
   extract_editable_config,
+  get_editable_schema,
   validate_perspective_points,
   validate_patch,
 )
@@ -94,4 +95,42 @@ def test_validate_patch_rejects_invalid_strip_start():
   with pytest.raises(ConfigValidationError) as exc:
     validate_patch({"wled": {"strip_start": "middle"}})
   assert "wled.strip_start" in exc.value.errors
+
+
+def _flatten_schema_keys(schema: dict, prefix: str = "") -> set[str]:
+  keys: set[str] = set()
+  for key, spec in schema.items():
+    path = f"{prefix}.{key}" if prefix else key
+    if spec.get("type"):
+      keys.add(path)
+    else:
+      keys.update(_flatten_schema_keys(spec, path))
+  return keys
+
+
+def test_editable_schema_covers_runtime_config(base_config):
+  """Every non-simulator config key (except perspective.points) has a web UI field."""
+  schema = get_editable_schema()
+  schema_keys = _flatten_schema_keys(schema)
+
+  expected = set()
+  for section, values in base_config.items():
+    if section == "simulator":
+      continue
+    if section == "perspective":
+      expected.add("perspective.output_resolution")
+      continue
+
+    def _walk(obj: dict, prefix: str) -> None:
+      for k, v in obj.items():
+        path = f"{prefix}.{k}"
+        if isinstance(v, dict):
+          _walk(v, path)
+        else:
+          expected.add(path)
+
+    _walk(values, section)
+
+  missing = expected - schema_keys
+  assert not missing, f"config keys missing from web schema: {sorted(missing)}"
 

@@ -6,6 +6,8 @@ blocks the main processing loop waiting for a camera I/O round-trip.
 
 import threading
 import logging
+
+import cv2
 import numpy as np
 
 try:
@@ -31,6 +33,7 @@ class PiCamera(CameraBase):
 
         cam_cfg = config["camera"]
         resolution = tuple(cam_cfg["resolution"])
+        self._rgb_swap: bool = bool(cam_cfg.get("rgb_swap", False))
 
         self._picam2 = Picamera2()
         preview_cfg = self._picam2.create_preview_configuration(
@@ -46,7 +49,7 @@ class PiCamera(CameraBase):
             }
         )
         self._picam2.start()
-        logger.info("PiCamera started at %s", resolution)
+        logger.info("PiCamera started at %s rgb_swap=%s", resolution, self._rgb_swap)
 
         self._frame: np.ndarray | None = None
         self._lock = threading.Lock()
@@ -58,6 +61,8 @@ class PiCamera(CameraBase):
         while self._running:
             try:
                 frame = self._picam2.capture_array()
+                if self._rgb_swap:
+                    frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
                 with self._lock:
                     self._frame = frame
             except Exception as exc:

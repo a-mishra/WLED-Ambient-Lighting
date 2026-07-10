@@ -19,6 +19,7 @@ camera:
 | Key | Type | Default | Description |
 |---|---|---|---|
 | `resolution` | `[W, H]` | `[320, 240]` | Capture resolution in pixels. This is the raw frame size from the camera. Used for calibration preview and as source for perspective correction. Larger = more detail but slower warp. |
+| `rgb_swap` | bool | `false` | When `true`, swaps red and blue channels after capture (`BGR→RGB`). Enable if red and blue are reversed in preview or on the LEDs — a common mismatch between Picamera2 buffers and the pipeline's RGB assumption. |
 | `awb_enable` | bool | `true` | Auto white balance. Set `false` to lock white balance for consistent colour in fixed lighting. |
 | `ae_enable` | bool | `true` | Auto exposure. Set `false` to use a fixed `exposure_time`. |
 | `analogue_gain` | float | `3.0` | Camera sensor gain. Range `1.0–8.0`. Increase for brighter image in dark rooms; too high introduces noise. |

@@ -44,7 +44,9 @@ class WLEDController(WLEDBase):
         )
 
         self._sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        self._sock.settimeout(1.0)
+        # No socket timeout — UDP sendto is fire-and-forget; a send timeout can
+        # spuriously raise "timed out" on slow/congested WiFi when the kernel
+        # cannot immediately queue the datagram.
 
         # Pre-allocate the UDP packet buffer once
         if self._protocol == "drgb":

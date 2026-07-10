@@ -138,6 +138,21 @@ def test_http_endpoints(server_state, frame):
       res = json.loads(r.read())
       assert res["ok"] is True
 
+    with urlopen(base + "/api/config") as r:
+      cfg = json.loads(r.read())
+      assert "rgb_swap" in cfg["schema"]["camera"]
+      assert "strip_start" in cfg["schema"]["wled"]
+      assert "output_resolution" in cfg["schema"]["perspective"]
+
+    patch = json.dumps({"perspective": {"output_resolution": [160, 90]}}).encode()
+    req = Request(
+      base + "/api/config", data=patch, method="PATCH",
+      headers={"Content-Type": "application/json"},
+    )
+    with urlopen(req) as r:
+      res = json.loads(r.read())
+      assert res["ok"] is True
+
     bad = json.dumps({"camera": {"analogue_gain": 999}}).encode()
     req = Request(
       base + "/api/config", data=bad, method="PATCH",

@@ -1,5 +1,6 @@
 camera:
   resolution: [320, 240]       # capture resolution — also used for calibration preview
+  rgb_swap: true               # swap BGR→RGB if red/blue are reversed (common on Pi Camera)
   awb_enable: true             # auto white balance
   ae_enable: true              # auto exposure
   analogue_gain: 3.0           # 1.0–5.0; increase for brighter image in dim rooms
@@ -31,19 +32,19 @@ color:
     alpha: 0.3                 # 0.1 = slow/smooth transitions, 1.0 = instant/sharp
 
 wled:
-  ip: "192.168.1.77"
+  ip: "192.168.1.210"
   port: 21324
   protocol: drgb               # drgb | warls
                                # drgb: 3 bytes/LED from LED 0 — simpler, slightly smaller packet
                                # warls: 4 bytes/LED with index — supports sparse updates
   timeout: 255                 # WLED realtime timeout (seconds, 1–255)
-  strip_start: top_left        # top_left | top_right | bottom_right | bottom_left
-  strip_direction: cw         # cw | ccw (viewed from front of TV)
+  strip_start: bottom_right    # top_left | top_right | bottom_right | bottom_left
+  strip_direction: ccw         # cw | ccw (viewed from front of TV)
   led_layout:                  # LEDs per side — logical order top→right→bottom→left
-    top: 84
-    right: 50
-    bottom: 84
-    left: 50
+    top: 72
+    right: 40
+    bottom: 0
+    left: 40
 
 processing:
   target_fps: 24

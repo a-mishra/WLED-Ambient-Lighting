@@ -28,6 +28,7 @@ def get_editable_schema() -> dict:
   return {
     "camera": {
       "resolution": {"type": "resolution", "label": "Resolution [W, H]"},
+      "rgb_swap": {"type": "bool", "label": "Swap R/B channels (fix red↔blue)"},
       "awb_enable": {"type": "bool", "label": "Auto white balance"},
       "ae_enable": {"type": "bool", "label": "Auto exposure"},
       "analogue_gain": {"type": "float", "label": "Analogue gain", "min": 1.0, "max": 8.0, "step": 0.1},
@@ -192,6 +193,8 @@ def validate_patch(patch: dict) -> dict:
         res = _validate_resolution(cam["resolution"], "camera.resolution", errors)
         if res is not None:
           out["resolution"] = res
+      if "rgb_swap" in cam:
+        out["rgb_swap"] = bool(cam["rgb_swap"])
       for bool_key in ("awb_enable", "ae_enable"):
         if bool_key in cam:
           out[bool_key] = bool(cam[bool_key])
@@ -383,6 +386,10 @@ def patch_warnings(config: dict, patch: dict) -> list[str]:
   warnings: list[str] = []
   if "camera" in patch and "resolution" in patch.get("camera", {}):
     warnings.append("Camera resolution changed — recalibrate perspective points.")
+  if "camera" in patch and "rgb_swap" in patch.get("camera", {}):
+    warnings.append("rgb_swap changed — restart main.py to apply.")
+  if "perspective" in patch and "output_resolution" in patch.get("perspective", {}):
+    warnings.append("Output resolution changed — restart main.py to apply.")
   if "wled" in patch:
     wled_patch = patch.get("wled", {})
     if "led_layout" in wled_patch:
