@@ -44,6 +44,233 @@ logger = logging.getLogger(__name__)
 CAPTURE_WARMUP_S = 1.5
 JPEG_SOI = b"\xff\xd8"
 
+_HTML_PAGE = r"""<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>WLED Ambient Config</title>
+<style>
+  * { box-sizing: border-box; }
+  body { font-family: system-ui, sans-serif; margin: 0; padding: 0; background: #1a1a2e; color: #eee; }
+  header { background: #16213e; padding: 12px 16px; border-bottom: 1px solid #333; }
+  header h1 { margin: 0; font-size: 1.2rem; }
+  nav { display: flex; flex-wrap: wrap; gap: 4px; padding: 8px 16px; background: #0f3460; }
+  nav button { background: #333; color: #eee; border: none; padding: 8px 14px; cursor: pointer; border-radius: 4px; }
+  nav button.active { background: #e94560; }
+  main { padding: 16px; max-width: 1400px; margin: 0 auto; }
+  .tab { display: none; }
+  .tab.active { display: block; }
+  .toolbar { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; }
+  .toolbar button, .form-section button {
+    background: #e94560; color: #fff; border: none; padding: 10px 16px;
+    border-radius: 4px; cursor: pointer; font-size: 0.95rem;
+  }
+  .toolbar button.secondary { background: #533483; }
+  .panels { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 12px; }
+  .panel { background: #16213e; border-radius: 8px; padding: 10px; }
+  .panel h3 { margin: 0 0 8px; font-size: 0.9rem; color: #aaa; }
+  .panel img { width: 100%; height: auto; border-radius: 4px; cursor: crosshair; background: #000; min-height: 120px; }
+  .panel img.no-click { cursor: default; }
+  .meta { background: #16213e; border-radius: 8px; padding: 12px; margin-top: 12px; font-size: 0.85rem; }
+  .meta table { width: 100%; border-collapse: collapse; }
+  .meta td { padding: 4px 8px; border-bottom: 1px solid #333; }
+  .msg { padding: 10px; border-radius: 4px; margin: 8px 0; }
+  .msg.ok { background: #1b4332; }
+  .msg.err { background: #6a040f; }
+  .msg.warn { background: #5c4d00; }
+  .form-section { background: #16213e; border-radius: 8px; padding: 16px; margin-bottom: 12px; }
+  .form-section h2 { margin-top: 0; font-size: 1rem; }
+  .field { margin-bottom: 12px; }
+  .field label { display: block; font-size: 0.85rem; color: #aaa; margin-bottom: 4px; }
+  .field input, .field select { width: 100%; max-width: 320px; padding: 8px; border-radius: 4px; border: 1px solid #444; background: #0f3460; color: #eee; }
+  .field input[type=range] { max-width: 100%; }
+  .row2 { display: flex; gap: 8px; flex-wrap: wrap; }
+  .row2 .field { flex: 1; min-width: 120px; }
+  details { margin-top: 8px; }
+  .cal-points { font-family: monospace; font-size: 0.8rem; }
+</style>
+</head>
+<body>
+<header><h1>WLED Ambient Lighting — Web Config</h1></header>
+<nav id="tabs">
+  <button class="active" data-tab="preview">Preview</button>
+  <button data-tab="camera">Camera</button>
+  <button data-tab="color">Color</button>
+  <button data-tab="wled">WLED</button>
+  <button data-tab="processing">Processing</button>
+</nav>
+<main>
+  <div id="banner"></div>
+  <div id="tab-preview" class="tab active">
+    <div class="toolbar">
+      <button onclick="captureFrame()">Capture</button>
+      <button onclick="captureFrame()">Retake</button>
+      <button class="secondary" onclick="reprocess()">Reprocess</button>
+      <button class="secondary" onclick="resetPoints()">Reset points</button>
+      <button class="secondary" onclick="saveCalibration()">Save calibration</button>
+    </div>
+    <p style="font-size:0.85rem;color:#aaa">Click the <strong>raw capture</strong> image: corners in order TL → TR → BR → BL. EMA smoothing applies at runtime only.</p>
+    <div class="panels">
+      <div class="panel"><h3>1. Raw capture</h3><img id="img-raw" alt="raw" onclick="onRawClick(event)"></div>
+      <div class="panel"><h3>2. Perspective corrected</h3><img id="img-warped" class="no-click" alt="warped"></div>
+      <div class="panel"><h3>3. LED colors</h3><img id="img-overlay" class="no-click" alt="overlay"></div>
+    </div>
+    <div class="meta" id="preview-meta">Click Capture to load preview.</div>
+    <div class="cal-points" id="cal-points"></div>
+  </div>
+  <div id="tab-camera" class="tab"><div class="form-section" id="form-camera"></div></div>
+  <div id="tab-color" class="tab"><div class="form-section" id="form-color"></div></div>
+  <div id="tab-wled" class="tab"><div class="form-section" id="form-wled"></div></div>
+  <div id="tab-processing" class="tab"><div class="form-section" id="form-processing"></div></div>
+</main>
+<script>
+let config = {};
+let clickPoints = [];
+const ts = () => Date.now();
+function showBanner(text, kind='ok') {
+  const el = document.getElementById('banner');
+  el.className = 'msg ' + kind;
+  el.textContent = text;
+  if (kind === 'ok') setTimeout(() => { el.textContent = ''; el.className = ''; }, 4000);
+}
+async function api(method, path, body) {
+  const opts = { method, headers: {} };
+  if (body !== undefined) { opts.headers['Content-Type'] = 'application/json'; opts.body = JSON.stringify(body); }
+  const r = await fetch(path, opts);
+  const data = await r.json().catch(() => ({}));
+  if (!r.ok) throw { status: r.status, data };
+  return data;
+}
+function refreshImages() {
+  const q = '?t=' + ts();
+  document.getElementById('img-raw').src = '/api/preview/raw.jpg' + q;
+  document.getElementById('img-warped').src = '/api/preview/warped.jpg' + q;
+  document.getElementById('img-overlay').src = '/api/preview/overlay.jpg' + q;
+}
+function renderPreviewMeta(meta) {
+  const el = document.getElementById('preview-meta');
+  if (!meta.has_cache) { el.innerHTML = 'No preview cached. Click <strong>Capture</strong>.'; return; }
+  const t = meta.timing_ms || {};
+  let html = '<table><tr><th>Stage</th><th>ms</th></tr>';
+  for (const k of ['capture','warp','extract','post_process']) {
+    if (t[k] !== undefined) html += `<tr><td>${k}</td><td>${t[k]}</td></tr>`;
+  }
+  html += `</table><p>LEDs: top ${meta.led_layout.top} + right ${meta.led_layout.right} + bottom ${meta.led_layout.bottom} + left ${meta.led_layout.left} = <strong>${meta.led_total}</strong></p>`;
+  html += '<details><summary>RGB per side</summary><pre>' + JSON.stringify(meta.colors, null, 2) + '</pre></details>';
+  el.innerHTML = html;
+  document.getElementById('cal-points').textContent = 'Saved points: ' + JSON.stringify(meta.points);
+  clickPoints = meta.points.map(p => [...p]);
+}
+async function captureFrame() {
+  try {
+    showBanner('Capturing…', 'warn');
+    const meta = await api('POST', '/api/preview/capture');
+    refreshImages(); renderPreviewMeta(meta); showBanner('Capture OK');
+  } catch (e) {
+    showBanner(e.data?.message || e.data?.error || 'Capture failed', e.status === 503 ? 'warn' : 'err');
+  }
+}
+async function reprocess() {
+  try {
+    const meta = await api('POST', '/api/preview/reprocess');
+    refreshImages(); renderPreviewMeta(meta); showBanner('Reprocessed');
+  } catch (e) { showBanner(e.data?.message || 'Reprocess failed', 'err'); }
+}
+function onRawClick(ev) {
+  if (clickPoints.length >= 4) return;
+  const img = ev.target;
+  const rect = img.getBoundingClientRect();
+  clickPoints.push([Math.round((ev.clientX - rect.left) * (img.naturalWidth / rect.width)),
+    Math.round((ev.clientY - rect.top) * (img.naturalHeight / rect.height))]);
+  document.getElementById('cal-points').textContent = 'Clicked: ' + JSON.stringify(clickPoints);
+}
+function resetPoints() {
+  clickPoints = (config.perspective?.points || []).map(p => [...p]);
+  document.getElementById('cal-points').textContent = 'Points reset to saved: ' + JSON.stringify(clickPoints);
+}
+async function saveCalibration() {
+  if (clickPoints.length !== 4) { showBanner('Click exactly 4 corners first.', 'err'); return; }
+  try {
+    const meta = await api('POST', '/api/calibration', { points: clickPoints });
+    refreshImages(); renderPreviewMeta(meta);
+    config.perspective.points = meta.points; showBanner('Calibration saved');
+  } catch (e) { showBanner(JSON.stringify(e.data?.fields || e.data) || 'Save failed', 'err'); }
+}
+function fieldHtml(section, key, spec, value) {
+  const id = section + '-' + key.replace(/\./g, '-');
+  const label = spec.label || key;
+  if (spec.type === 'bool') return `<div class="field"><label><input type="checkbox" id="${id}" ${value ? 'checked' : ''}> ${label}</label></div>`;
+  if (spec.type === 'enum') return `<div class="field"><label>${label}</label><select id="${id}">${spec.options.map(o => `<option value="${o}" ${o===value?'selected':''}>${o}</option>`).join('')}</select></div>`;
+  if (spec.type === 'resolution') { const v = value || [320, 240]; return `<div class="field row2"><div class="field"><label>${label} W</label><input type="number" id="${id}-w" value="${v[0]}"></div><div class="field"><label>H</label><input type="number" id="${id}-h" value="${v[1]}"></div></div>`; }
+  if (spec.type === 'float' && spec.max !== undefined) return `<div class="field"><label>${label}: <span id="${id}-v">${value}</span></label><input type="range" id="${id}" min="${spec.min}" max="${spec.max}" step="${spec.step||0.1}" value="${value}" oninput="document.getElementById('${id}-v').textContent=this.value"></div>`;
+  return `<div class="field"><label>${label}</label><input type="${spec.type === 'int' ? 'number' : 'text'}" id="${id}" value="${value ?? ''}"></div>`;
+}
+function buildForm(section, schema, data, containerId) {
+  let html = `<h2>${section.charAt(0).toUpperCase() + section.slice(1)}</h2>`;
+  for (const [key, spec] of Object.entries(schema)) {
+    if (spec.type) html += fieldHtml(section, key, spec, data[key]);
+    else { html += `<h3>${key}</h3>`; for (const [subkey, subspec] of Object.entries(spec)) html += fieldHtml(section, key + '.' + subkey, subspec, (data[key]||{})[subkey]); }
+  }
+  html += `<button onclick="saveSection('${section}')">Save ${section}</button>`;
+  document.getElementById(containerId).innerHTML = html;
+}
+function readSection(section, schema) {
+  const out = {};
+  for (const [key, spec] of Object.entries(schema)) {
+    if (spec.type) {
+      const id = section + '-' + key.replace(/\./g, '-');
+      if (spec.type === 'bool') out[key] = document.getElementById(id).checked;
+      else if (spec.type === 'resolution') out[key] = [parseInt(document.getElementById(id + '-w').value), parseInt(document.getElementById(id + '-h').value)];
+      else if (spec.type === 'float') out[key] = parseFloat(document.getElementById(id).value);
+      else if (spec.type === 'int') out[key] = parseInt(document.getElementById(id).value);
+      else out[key] = document.getElementById(id).value;
+    } else {
+      out[key] = {};
+      for (const subkey of Object.keys(spec)) {
+        const id = section + '-' + key + '-' + subkey;
+        if (spec[subkey].type === 'int') out[key][subkey] = parseInt(document.getElementById(id).value);
+        else out[key][subkey] = document.getElementById(id).value;
+      }
+    }
+  }
+  return out;
+}
+async function saveSection(section) {
+  try {
+    const schema = (await api('GET', '/api/config')).schema[section];
+    const body = {}; body[section] = readSection(section, schema);
+    const res = await api('PATCH', '/api/config', body);
+    config = res.config;
+    if (res.warnings?.length) showBanner(res.warnings.join(' '), 'warn');
+    else showBanner(section + ' saved — click Reprocess on Preview tab to update images');
+  } catch (e) { showBanner(JSON.stringify(e.data?.fields || e.data) || 'Save failed', 'err'); }
+}
+document.getElementById('tabs').addEventListener('click', (ev) => {
+  if (ev.target.tagName !== 'BUTTON') return;
+  document.querySelectorAll('nav button').forEach(b => b.classList.remove('active'));
+  document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+  ev.target.classList.add('active');
+  document.getElementById('tab-' + ev.target.dataset.tab).classList.add('active');
+});
+async function init() {
+  try {
+    const res = await api('GET', '/api/config');
+    config = res.config;
+    clickPoints = (config.perspective?.points || []).map(p => [...p]);
+    buildForm('camera', res.schema.camera, config.camera, 'form-camera');
+    buildForm('color', res.schema.color, config.color, 'form-color');
+    buildForm('wled', res.schema.wled, config.wled, 'form-wled');
+    buildForm('processing', res.schema.processing, config.processing, 'form-processing');
+    const meta = await api('GET', '/api/preview/meta');
+    if (meta.has_cache) { refreshImages(); renderPreviewMeta(meta); } else renderPreviewMeta(meta);
+  } catch (e) { showBanner('Failed to load config', 'err'); }
+}
+init();
+</script>
+</body>
+</html>"""
+
 
 class ServerState:
   """Shared mutable state for the HTTP handler."""
@@ -399,296 +626,3 @@ def main() -> None:
 
 if __name__ == "__main__":
   main()
-
-
-_HTML_PAGE = r"""<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>WLED Ambient Config</title>
-<style>
-  * { box-sizing: border-box; }
-  body { font-family: system-ui, sans-serif; margin: 0; padding: 0; background: #1a1a2e; color: #eee; }
-  header { background: #16213e; padding: 12px 16px; border-bottom: 1px solid #333; }
-  header h1 { margin: 0; font-size: 1.2rem; }
-  nav { display: flex; flex-wrap: wrap; gap: 4px; padding: 8px 16px; background: #0f3460; }
-  nav button { background: #333; color: #eee; border: none; padding: 8px 14px; cursor: pointer; border-radius: 4px; }
-  nav button.active { background: #e94560; }
-  main { padding: 16px; max-width: 1400px; margin: 0 auto; }
-  .tab { display: none; }
-  .tab.active { display: block; }
-  .toolbar { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; }
-  .toolbar button, .form-section button {
-    background: #e94560; color: #fff; border: none; padding: 10px 16px;
-    border-radius: 4px; cursor: pointer; font-size: 0.95rem;
-  }
-  .toolbar button.secondary { background: #533483; }
-  .panels { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 12px; }
-  .panel { background: #16213e; border-radius: 8px; padding: 10px; }
-  .panel h3 { margin: 0 0 8px; font-size: 0.9rem; color: #aaa; }
-  .panel img { width: 100%; height: auto; border-radius: 4px; cursor: crosshair; background: #000; min-height: 120px; }
-  .panel img.no-click { cursor: default; }
-  .meta { background: #16213e; border-radius: 8px; padding: 12px; margin-top: 12px; font-size: 0.85rem; }
-  .meta table { width: 100%; border-collapse: collapse; }
-  .meta td { padding: 4px 8px; border-bottom: 1px solid #333; }
-  .msg { padding: 10px; border-radius: 4px; margin: 8px 0; }
-  .msg.ok { background: #1b4332; }
-  .msg.err { background: #6a040f; }
-  .msg.warn { background: #5c4d00; }
-  .form-section { background: #16213e; border-radius: 8px; padding: 16px; margin-bottom: 12px; }
-  .form-section h2 { margin-top: 0; font-size: 1rem; }
-  .field { margin-bottom: 12px; }
-  .field label { display: block; font-size: 0.85rem; color: #aaa; margin-bottom: 4px; }
-  .field input, .field select { width: 100%; max-width: 320px; padding: 8px; border-radius: 4px; border: 1px solid #444; background: #0f3460; color: #eee; }
-  .field input[type=range] { max-width: 100%; }
-  .row2 { display: flex; gap: 8px; flex-wrap: wrap; }
-  .row2 .field { flex: 1; min-width: 120px; }
-  details { margin-top: 8px; }
-  .cal-points { font-family: monospace; font-size: 0.8rem; }
-</style>
-</head>
-<body>
-<header><h1>WLED Ambient Lighting — Web Config</h1></header>
-<nav id="tabs">
-  <button class="active" data-tab="preview">Preview</button>
-  <button data-tab="camera">Camera</button>
-  <button data-tab="color">Color</button>
-  <button data-tab="wled">WLED</button>
-  <button data-tab="processing">Processing</button>
-</nav>
-<main>
-  <div id="banner"></div>
-
-  <div id="tab-preview" class="tab active">
-    <div class="toolbar">
-      <button onclick="captureFrame()">Capture</button>
-      <button onclick="captureFrame()">Retake</button>
-      <button class="secondary" onclick="reprocess()">Reprocess</button>
-      <button class="secondary" onclick="resetPoints()">Reset points</button>
-      <button class="secondary" onclick="saveCalibration()">Save calibration</button>
-    </div>
-    <p style="font-size:0.85rem;color:#aaa">Click the <strong>raw capture</strong> image: corners in order TL → TR → BR → BL. EMA smoothing applies at runtime only.</p>
-    <div class="panels">
-      <div class="panel"><h3>1. Raw capture</h3><img id="img-raw" alt="raw" onclick="onRawClick(event)"></div>
-      <div class="panel"><h3>2. Perspective corrected</h3><img id="img-warped" class="no-click" alt="warped"></div>
-      <div class="panel"><h3>3. LED colors</h3><img id="img-overlay" class="no-click" alt="overlay"></div>
-    </div>
-    <div class="meta" id="preview-meta">Click Capture to load preview.</div>
-    <div class="cal-points" id="cal-points"></div>
-  </div>
-
-  <div id="tab-camera" class="tab"><div class="form-section" id="form-camera"></div></div>
-  <div id="tab-color" class="tab"><div class="form-section" id="form-color"></div></div>
-  <div id="tab-wled" class="tab"><div class="form-section" id="form-wled"></div></div>
-  <div id="tab-processing" class="tab"><div class="form-section" id="form-processing"></div></div>
-</main>
-<script>
-let config = {};
-let clickPoints = [];
-const ts = () => Date.now();
-
-function showBanner(text, kind='ok') {
-  const el = document.getElementById('banner');
-  el.className = 'msg ' + kind;
-  el.textContent = text;
-  if (kind === 'ok') setTimeout(() => { el.textContent = ''; el.className = ''; }, 4000);
-}
-
-async function api(method, path, body) {
-  const opts = { method, headers: {} };
-  if (body !== undefined) {
-    opts.headers['Content-Type'] = 'application/json';
-    opts.body = JSON.stringify(body);
-  }
-  const r = await fetch(path, opts);
-  const data = await r.json().catch(() => ({}));
-  if (!r.ok) throw { status: r.status, data };
-  return data;
-}
-
-function refreshImages() {
-  const q = '?t=' + ts();
-  document.getElementById('img-raw').src = '/api/preview/raw.jpg' + q;
-  document.getElementById('img-warped').src = '/api/preview/warped.jpg' + q;
-  document.getElementById('img-overlay').src = '/api/preview/overlay.jpg' + q;
-}
-
-function renderPreviewMeta(meta) {
-  const el = document.getElementById('preview-meta');
-  if (!meta.has_cache) {
-    el.innerHTML = 'No preview cached. Click <strong>Capture</strong>.';
-    return;
-  }
-  const t = meta.timing_ms || {};
-  let html = '<table><tr><th>Stage</th><th>ms</th></tr>';
-  for (const k of ['capture','warp','extract','post_process']) {
-    if (t[k] !== undefined) html += `<tr><td>${k}</td><td>${t[k]}</td></tr>`;
-  }
-  html += `</table><p>LEDs: top ${meta.led_layout.top} + right ${meta.led_layout.right} + bottom ${meta.led_layout.bottom} + left ${meta.led_layout.left} = <strong>${meta.led_total}</strong></p>`;
-  html += '<details><summary>RGB per side</summary><pre>' + JSON.stringify(meta.colors, null, 2) + '</pre></details>';
-  el.innerHTML = html;
-  document.getElementById('cal-points').textContent = 'Saved points: ' + JSON.stringify(meta.points);
-  clickPoints = meta.points.map(p => [...p]);
-}
-
-async function captureFrame() {
-  try {
-    showBanner('Capturing…', 'warn');
-    const meta = await api('POST', '/api/preview/capture');
-    refreshImages();
-    renderPreviewMeta(meta);
-    showBanner('Capture OK');
-  } catch (e) {
-    const msg = e.data?.message || e.data?.error || 'Capture failed';
-    showBanner(msg, e.status === 503 ? 'warn' : 'err');
-  }
-}
-
-async function reprocess() {
-  try {
-    const meta = await api('POST', '/api/preview/reprocess');
-    refreshImages();
-    renderPreviewMeta(meta);
-    showBanner('Reprocessed');
-  } catch (e) {
-    showBanner(e.data?.message || 'Reprocess failed', 'err');
-  }
-}
-
-function onRawClick(ev) {
-  if (clickPoints.length >= 4) return;
-  const img = ev.target;
-  const rect = img.getBoundingClientRect();
-  const x = (ev.clientX - rect.left) * (img.naturalWidth / rect.width);
-  const y = (ev.clientY - rect.top) * (img.naturalHeight / rect.height);
-  clickPoints.push([Math.round(x), Math.round(y)]);
-  document.getElementById('cal-points').textContent = 'Clicked: ' + JSON.stringify(clickPoints);
-}
-
-function resetPoints() {
-  clickPoints = (config.perspective?.points || []).map(p => [...p]);
-  document.getElementById('cal-points').textContent = 'Points reset to saved: ' + JSON.stringify(clickPoints);
-}
-
-async function saveCalibration() {
-  if (clickPoints.length !== 4) {
-    showBanner('Click exactly 4 corners first.', 'err');
-    return;
-  }
-  try {
-    const meta = await api('POST', '/api/calibration', { points: clickPoints });
-    refreshImages();
-    renderPreviewMeta(meta);
-    config.perspective.points = meta.points;
-    showBanner('Calibration saved');
-  } catch (e) {
-    const fields = e.data?.fields;
-    showBanner(fields ? JSON.stringify(fields) : 'Save failed', 'err');
-  }
-}
-
-function fieldHtml(section, key, spec, value) {
-  const id = section + '-' + key.replace('.', '-');
-  const label = spec.label || key;
-  if (spec.type === 'bool') {
-    return `<div class="field"><label><input type="checkbox" id="${id}" ${value ? 'checked' : ''}> ${label}</label></div>`;
-  }
-  if (spec.type === 'enum') {
-    const opts = spec.options.map(o => `<option value="${o}" ${o===value?'selected':''}>${o}</option>`).join('');
-    return `<div class="field"><label>${label}</label><select id="${id}">${opts}</select></div>`;
-  }
-  if (spec.type === 'resolution') {
-    const v = value || [320, 240];
-    return `<div class="field row2"><div class="field"><label>${label} W</label><input type="number" id="${id}-w" value="${v[0]}"></div><div class="field"><label>H</label><input type="number" id="${id}-h" value="${v[1]}"></div></div>`;
-  }
-  if (spec.type === 'float' && spec.max !== undefined) {
-    return `<div class="field"><label>${label}: <span id="${id}-v">${value}</span></label><input type="range" id="${id}" min="${spec.min}" max="${spec.max}" step="${spec.step||0.1}" value="${value}" oninput="document.getElementById('${id}-v').textContent=this.value"></div>`;
-  }
-  const inputType = spec.type === 'int' ? 'number' : 'text';
-  return `<div class="field"><label>${label}</label><input type="${inputType}" id="${id}" value="${value ?? ''}"></div>`;
-}
-
-function buildForm(section, schema, data, containerId) {
-  let html = `<h2>${section.charAt(0).toUpperCase() + section.slice(1)}</h2>`;
-  for (const [key, spec] of Object.entries(schema)) {
-    if (spec.type) {
-      html += fieldHtml(section, key, spec, data[key]);
-    } else {
-      html += `<h3>${key}</h3>`;
-      for (const [subkey, subspec] of Object.entries(spec)) {
-        const val = (data[key] || {})[subkey];
-        html += fieldHtml(section, key + '.' + subkey, subspec, val);
-      }
-    }
-  }
-  html += `<button onclick="saveSection('${section}')">Save ${section}</button>`;
-  document.getElementById(containerId).innerHTML = html;
-}
-
-function readSection(section, schema) {
-  const out = {};
-  for (const [key, spec] of Object.entries(schema)) {
-    if (spec.type) {
-      const id = section + '-' + key.replace('.', '-');
-      if (spec.type === 'bool') out[key] = document.getElementById(id).checked;
-      else if (spec.type === 'resolution') {
-        out[key] = [parseInt(document.getElementById(id + '-w').value), parseInt(document.getElementById(id + '-h').value)];
-      } else if (spec.type === 'float') out[key] = parseFloat(document.getElementById(id).value);
-      else if (spec.type === 'int') out[key] = parseInt(document.getElementById(id).value);
-      else out[key] = document.getElementById(id).value;
-    } else {
-      out[key] = {};
-      for (const subkey of Object.keys(spec)) {
-        const id = section + '-' + key + '.' + subkey;
-        const subspec = spec[subkey];
-        if (subspec.type === 'int') out[key][subkey] = parseInt(document.getElementById(id.replace('.', '-')).value);
-        else out[key][subkey] = document.getElementById(id.replace('.', '-')).value;
-      }
-    }
-  }
-  return out;
-}
-
-async function saveSection(section) {
-  try {
-    const schema = (await api('GET', '/api/config')).schema[section];
-    const body = {};
-    body[section] = readSection(section, schema);
-    const res = await api('PATCH', '/api/config', body);
-    config = res.config;
-    if (res.warnings?.length) showBanner(res.warnings.join(' '), 'warn');
-    else showBanner(section + ' saved — click Reprocess on Preview tab to update images');
-  } catch (e) {
-    showBanner(JSON.stringify(e.data?.fields || e.data) || 'Save failed', 'err');
-  }
-}
-
-document.getElementById('tabs').addEventListener('click', (ev) => {
-  if (ev.target.tagName !== 'BUTTON') return;
-  document.querySelectorAll('nav button').forEach(b => b.classList.remove('active'));
-  document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
-  ev.target.classList.add('active');
-  document.getElementById('tab-' + ev.target.dataset.tab).classList.add('active');
-});
-
-async function init() {
-  try {
-    const res = await api('GET', '/api/config');
-    config = res.config;
-    clickPoints = (config.perspective?.points || []).map(p => [...p]);
-    buildForm('camera', res.schema.camera, config.camera, 'form-camera');
-    buildForm('color', res.schema.color, config.color, 'form-color');
-    buildForm('wled', res.schema.wled, config.wled, 'form-wled');
-    buildForm('processing', res.schema.processing, config.processing, 'form-processing');
-    const meta = await api('GET', '/api/preview/meta');
-    if (meta.has_cache) { refreshImages(); renderPreviewMeta(meta); }
-    else renderPreviewMeta(meta);
-  } catch (e) {
-    showBanner('Failed to load config', 'err');
-  }
-}
-init();
-</script>
-</body>
-</html>"""
