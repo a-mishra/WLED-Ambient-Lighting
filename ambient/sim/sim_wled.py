@@ -17,6 +17,7 @@ import logging
 import numpy as np
 
 from ..base import WLEDBase
+from ..strip_map import StripMapper
 
 logger = logging.getLogger(__name__)
 
@@ -40,6 +41,7 @@ class SimWLED(WLEDBase):
         self._n_right: int = led_layout["right"]
         self._n_bottom: int = led_layout["bottom"]
         self._n_left: int = led_layout["left"]
+        self._mapper = StripMapper(wled_cfg)
 
         self._display: str = sim_cfg.get("display", "none")
         self._scale: int = int(sim_cfg.get("window_scale", 4))
@@ -99,12 +101,13 @@ class SimWLED(WLEDBase):
         """Render LED colors to the selected display mode.
 
         Args:
-            colors: uint8 (n_leds, 3) RGB array in strip order.
+            colors: uint8 (n_leds, 3) RGB array in physical wire order.
         """
+        logical = self._mapper.to_logical(colors)
         if self._display == "window":
-            self._render_window(colors)
+            self._render_window(logical)
         elif self._display == "console":
-            self._render_console(colors)
+            self._render_console(logical)
         # none: no-op
 
     def set_preview_frame(self, frame: np.ndarray) -> None:

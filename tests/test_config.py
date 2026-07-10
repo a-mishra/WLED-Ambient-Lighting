@@ -53,12 +53,20 @@ def test_perspective_points_are_four_pairs():
         assert len(pt) == 2
 
 
-def test_led_layout_all_positive():
+def test_led_layout_non_negative():
     cfg = load_config(CONFIG_PATH)
     layout = cfg["wled"]["led_layout"]
     for side in ("top", "right", "bottom", "left"):
         assert side in layout
-        assert layout[side] > 0
+        assert layout[side] >= 0
+    total = sum(layout.values())
+    assert total > 0
+
+
+def test_strip_routing_defaults():
+    cfg = load_config(CONFIG_PATH)
+    assert cfg["wled"].get("strip_start", "top_left") == "top_left"
+    assert cfg["wled"].get("strip_direction", "cw") == "cw"
 
 
 def test_output_resolution_is_two_ints():

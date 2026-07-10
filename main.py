@@ -33,6 +33,7 @@ from ambient.perspective import PerspectiveCorrector
 from ambient.color import EdgeColorExtractor
 from ambient.smoother import EMASmoother
 from ambient.factory import create_camera, create_wled
+from ambient.strip_map import StripMapper
 
 
 def setup_logging(config: dict) -> logging.Logger:
@@ -95,6 +96,7 @@ def main() -> None:
         perspective_matrix=corrector.matrix if use_remap else None,
     )
     smoother = EMASmoother(config, n_leds=extractor.n_total)
+    strip_mapper = StripMapper(config["wled"])
     camera = create_camera(config)
     wled = create_wled(config)
 
@@ -156,7 +158,7 @@ def main() -> None:
 
             # --- Send ---
             t0 = time.perf_counter()
-            wled.send(colors)
+            wled.send(strip_mapper.to_physical(colors))
             t_send = time.perf_counter() - t0
 
             frame_count += 1

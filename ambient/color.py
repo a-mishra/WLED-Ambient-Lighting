@@ -141,31 +141,41 @@ class EdgeColorExtractor:
         """
         h, w = warped.shape[:2]
 
-        # Top edge: full width strip at top, collapsed to n_top × 1
-        top_strip = warped[: self._depth_h, :, :]
-        top = cv2.resize(top_strip, (self._n_top, 1), interpolation=cv2.INTER_AREA).reshape(
-            self._n_top, 3
-        )
+        parts: list[np.ndarray] = []
 
-        # Right edge: full height strip on the right, collapsed to 1 × n_right
-        right_strip = warped[:, w - self._depth_w :, :]
-        right = cv2.resize(right_strip, (1, self._n_right), interpolation=cv2.INTER_AREA).reshape(
-            self._n_right, 3
-        )
+        if self._n_top > 0:
+            top_strip = warped[: self._depth_h, :, :]
+            parts.append(
+                cv2.resize(top_strip, (self._n_top, 1), interpolation=cv2.INTER_AREA).reshape(
+                    self._n_top, 3
+                )
+            )
 
-        # Bottom edge: reversed left-to-right so the strip wraps around the TV
-        bot_strip = warped[h - self._depth_h :, ::-1, :]
-        bot = cv2.resize(bot_strip, (self._n_bottom, 1), interpolation=cv2.INTER_AREA).reshape(
-            self._n_bottom, 3
-        )
+        if self._n_right > 0:
+            right_strip = warped[:, w - self._depth_w :, :]
+            parts.append(
+                cv2.resize(right_strip, (1, self._n_right), interpolation=cv2.INTER_AREA).reshape(
+                    self._n_right, 3
+                )
+            )
 
-        # Left edge: reversed top-to-bottom so the strip wraps around the TV
-        left_strip = warped[::-1, : self._depth_w, :]
-        left = cv2.resize(left_strip, (1, self._n_left), interpolation=cv2.INTER_AREA).reshape(
-            self._n_left, 3
-        )
+        if self._n_bottom > 0:
+            bot_strip = warped[h - self._depth_h :, ::-1, :]
+            parts.append(
+                cv2.resize(bot_strip, (self._n_bottom, 1), interpolation=cv2.INTER_AREA).reshape(
+                    self._n_bottom, 3
+                )
+            )
 
-        return np.concatenate([top, right, bot, left], axis=0)
+        if self._n_left > 0:
+            left_strip = warped[::-1, : self._depth_w, :]
+            parts.append(
+                cv2.resize(left_strip, (1, self._n_left), interpolation=cv2.INTER_AREA).reshape(
+                    self._n_left, 3
+                )
+            )
+
+        return np.concatenate(parts, axis=0)
 
     def _extract_remap(self, raw: np.ndarray) -> np.ndarray:
         """Extract from the raw camera frame using pre-computed remap maps."""
@@ -174,19 +184,28 @@ class EdgeColorExtractor:
             strip = cv2.remap(raw, maps[0], maps[1], cv2.INTER_NEAREST)
             return cv2.resize(strip, dsize, interpolation=cv2.INTER_AREA).reshape(n_leds, 3)
 
-        top = _remap_resize(self._remap_top, self._n_top, (self._n_top, 1))
-        right = _remap_resize(self._remap_right, self._n_right, (1, self._n_right))
-        # Bottom and left reversed to match physical strip wrap-around
-        bot_strip = cv2.remap(raw, self._remap_bot[0], self._remap_bot[1], cv2.INTER_NEAREST)
-        bot = cv2.resize(bot_strip[:, ::-1, :], (self._n_bottom, 1), interpolation=cv2.INTER_AREA).reshape(
-            self._n_bottom, 3
-        )
-        left_strip = cv2.remap(raw, self._remap_left[0], self._remap_left[1], cv2.INTER_NEAREST)
-        left = cv2.resize(left_strip[::-1, :, :], (1, self._n_left), interpolation=cv2.INTER_AREA).reshape(
-            self._n_left, 3
-        )
+        parts: list[np.ndarray] = []
 
-        return np.concatenate([top, right, bot, left], axis=0)
+        if self._n_top > 0:
+            parts.append(_remap_resize(self._remap_top, self._n_top, (self._n_top, 1)))
+        if self._n_right > 0:
+            parts.append(_remap_resize(self._remap_right, self._n_right, (1, self._n_right)))
+        if self._n_bottom > 0:
+            bot_strip = cv2.remap(raw, self._remap_bot[0], self._remap_bot[1], cv2.INTER_NEAREST)
+            parts.append(
+                cv2.resize(bot_strip[:, ::-1, :], (self._n_bottom, 1), interpolation=cv2.INTER_AREA).reshape(
+                    self._n_bottom, 3
+                )
+            )
+        if self._n_left > 0:
+            left_strip = cv2.remap(raw, self._remap_left[0], self._remap_left[1], cv2.INTER_NEAREST)
+            parts.append(
+                cv2.resize(left_strip[::-1, :, :], (1, self._n_left), interpolation=cv2.INTER_AREA).reshape(
+                    self._n_left, 3
+                )
+            )
+
+        return np.concatenate(parts, axis=0)
 
     # ------------------------------------------------------------------
     # Post-processing

@@ -53,11 +53,21 @@ def get_editable_schema() -> dict:
       "port": {"type": "int", "label": "UDP port", "min": 1, "max": 65535},
       "protocol": {"type": "enum", "label": "Protocol", "options": ["drgb", "warls"]},
       "timeout": {"type": "int", "label": "Realtime timeout (s)", "min": 1, "max": 255},
+      "strip_start": {
+        "type": "enum",
+        "label": "Strip start corner",
+        "options": ["top_left", "top_right", "bottom_right", "bottom_left"],
+      },
+      "strip_direction": {
+        "type": "enum",
+        "label": "Strip direction",
+        "options": ["cw", "ccw"],
+      },
       "led_layout": {
-        "top": {"type": "int", "label": "Top LEDs", "min": 1, "max": 500},
-        "right": {"type": "int", "label": "Right LEDs", "min": 1, "max": 500},
-        "bottom": {"type": "int", "label": "Bottom LEDs", "min": 1, "max": 500},
-        "left": {"type": "int", "label": "Left LEDs", "min": 1, "max": 500},
+        "top": {"type": "int", "label": "Top LEDs", "min": 0, "max": 500},
+        "right": {"type": "int", "label": "Right LEDs", "min": 0, "max": 500},
+        "bottom": {"type": "int", "label": "Bottom LEDs", "min": 0, "max": 500},
+        "left": {"type": "int", "label": "Left LEDs", "min": 0, "max": 500},
       },
     },
     "processing": {
@@ -286,6 +296,18 @@ def validate_patch(patch: dict) -> dict:
         v = _validate_int(wled["timeout"], "wled.timeout", 1, 255, errors)
         if v is not None:
           out["timeout"] = v
+      if "strip_start" in wled:
+        start = str(wled["strip_start"])
+        if start not in ("top_left", "top_right", "bottom_right", "bottom_left"):
+          errors["wled.strip_start"] = "must be top_left, top_right, bottom_right, or bottom_left"
+        else:
+          out["strip_start"] = start
+      if "strip_direction" in wled:
+        direction = str(wled["strip_direction"])
+        if direction not in ("cw", "ccw"):
+          errors["wled.strip_direction"] = "must be cw or ccw"
+        else:
+          out["strip_direction"] = direction
       if "led_layout" in wled:
         layout = wled["led_layout"]
         if not isinstance(layout, dict):
@@ -294,10 +316,13 @@ def validate_patch(patch: dict) -> dict:
           lo: dict = {}
           for side in ("top", "right", "bottom", "left"):
             if side in layout:
-              v = _validate_int(layout[side], f"wled.led_layout.{side}", 1, 500, errors)
+              v = _validate_int(layout[side], f"wled.led_layout.{side}", 0, 500, errors)
               if v is not None:
                 lo[side] = v
           if lo:
+            total = sum(lo.values())
+            if total < 1:
+              errors["wled.led_layout"] = "total LED count must be at least 1"
             out["led_layout"] = lo
       if out:
         validated["wled"] = out
@@ -358,10 +383,14 @@ def patch_warnings(config: dict, patch: dict) -> list[str]:
   warnings: list[str] = []
   if "camera" in patch and "resolution" in patch.get("camera", {}):
     warnings.append("Camera resolution changed — recalibrate perspective points.")
-  if "wled" in patch and "led_layout" in patch.get("wled", {}):
-    layout = config["wled"]["led_layout"]
-    total = layout["top"] + layout["right"] + layout["bottom"] + layout["left"]
-    warnings.append(f"LED layout total: {total} — must match WLED firmware.")
+  if "wled" in patch:
+    wled_patch = patch.get("wled", {})
+    if "led_layout" in wled_patch:
+      layout = config["wled"]["led_layout"]
+      total = layout["top"] + layout["right"] + layout["bottom"] + layout["left"]
+      warnings.append(f"LED layout total: {total} — must match WLED firmware.")
+    if any(k in wled_patch for k in ("strip_start", "strip_direction", "led_layout")):
+      warnings.append("Strip routing changed — restart main.py to apply.")
   return warnings
 
 

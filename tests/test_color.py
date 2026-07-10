@@ -37,6 +37,14 @@ def _make_config(out_w=160, out_h=90, n_top=16, n_right=9, n_bottom=16, n_left=9
     }
 
 
+def test_output_shape_zero_bottom():
+    config = _make_config(n_top=10, n_right=6, n_bottom=0, n_left=6)
+    extractor = EdgeColorExtractor(config)
+    frame = np.zeros((90, 160, 3), dtype=np.uint8)
+    colors = extractor.extract(frame)
+    assert colors.shape == (22, 3)  # 10+6+0+6
+
+
 def test_output_shape():
     config = _make_config(n_top=10, n_right=6, n_bottom=10, n_left=6)
     extractor = EdgeColorExtractor(config)

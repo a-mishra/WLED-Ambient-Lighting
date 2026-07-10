@@ -77,7 +77,8 @@ class WLEDController(WLEDBase):
         """Write colors into the pre-allocated packet buffer and send via UDP.
 
         Args:
-            colors: uint8 ndarray (n_leds, 3) RGB, strip order top→right→bottom→left.
+            colors: uint8 ndarray (n_leds, 3) RGB in physical wire order
+                    (LED 0 = first pixel on the strip as configured).
         """
         try:
             if self._protocol == "drgb":

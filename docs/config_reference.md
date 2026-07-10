@@ -95,6 +95,8 @@ wled:
   port: 21324
   protocol: drgb
   timeout: 255
+  strip_start: top_left        # top_left | top_right | bottom_right | bottom_left
+  strip_direction: cw         # cw | ccw (viewed from front of TV)
   led_layout:
     top: 84
     right: 50
@@ -108,21 +110,27 @@ wled:
 | `port` | int | `21324` | UDP port. WLED's default real-time port. Do not change unless you've changed it in WLED settings. |
 | `protocol` | string | `drgb` | UDP protocol variant. `drgb` = 3 bytes/LED from index 0 (simpler, default). `warls` = 4 bytes/LED with an explicit index (allows sparse updates, slightly more overhead). Use `drgb` unless you have a specific reason for `warls`. |
 | `timeout` | int | `255` | WLED real-time timeout in seconds. WLED will revert to its normal effect after this many seconds of not receiving packets. `255` = maximum (never revert during normal operation). |
+| `strip_start` | string | `top_left` | Corner where physical LED 0 sits: `top_left`, `top_right`, `bottom_right`, or `bottom_left`. |
+| `strip_direction` | string | `cw` | Direction the strip runs around the TV when viewed from the front: `cw` (clockwise) or `ccw` (counter-clockwise). |
 
-### `wled.led_layout` — Physical strip wiring
+### `wled.led_layout` — LEDs per TV edge
 
 | Key | Type | Description |
 |---|---|---|
-| `top` | int | Number of physical LEDs along the top edge. |
-| `right` | int | Number of physical LEDs along the right edge. |
-| `bottom` | int | Number of physical LEDs along the bottom edge. |
-| `left` | int | Number of physical LEDs along the left edge. |
+| `top` | int | Number of LEDs along the top edge. |
+| `right` | int | Number of LEDs along the right edge. |
+| `bottom` | int | Number of LEDs along the bottom edge (may be `0` if no strip on that side). |
+| `left` | int | Number of LEDs along the left edge. |
 
-The strip is assumed to start at the **top-left corner** and run **clockwise**:
-top → right → bottom (right-to-left) → left (bottom-to-top).
+Colors are sampled in **logical** order: top (L→R) → right (T→B) → bottom (R→L) → left (B→T).
+Before sending to WLED, they are permuted into **physical wire order** using `strip_start` and
+`strip_direction`.
 
-The total LED count (`top + right + bottom + left`) must match the WLED
-controller's configured LED count.
+The default (`strip_start: top_left`, `strip_direction: cw`) matches a strip that starts at the
+top-left corner and runs clockwise — the original hardcoded behavior.
+
+The total LED count (`top + right + bottom + left`) must match the WLED controller's configured
+LED count.
 
 > **Common TV sizes:**  
 > 55" TV with 5mm LED density: top≈84, right≈50, bottom≈84, left≈50 (268 total)  

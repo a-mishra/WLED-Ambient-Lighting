@@ -37,7 +37,9 @@ wled:
                                # drgb: 3 bytes/LED from LED 0 — simpler, slightly smaller packet
                                # warls: 4 bytes/LED with index — supports sparse updates
   timeout: 255                 # WLED realtime timeout (seconds, 1–255)
-  led_layout:                  # physical LEDs per side — strip runs top→right→bottom→left
+  strip_start: top_left        # top_left | top_right | bottom_right | bottom_left
+  strip_direction: cw         # cw | ccw (viewed from front of TV)
+  led_layout:                  # LEDs per side — logical order top→right→bottom→left
     top: 84
     right: 50
     bottom: 84

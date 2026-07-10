@@ -156,10 +156,23 @@ Adjust `color.smoothing.alpha` in `config.yaml`:
 
 ### If LEDs at strip edges don't match the TV corners
 
-The LED order in the config must match your physical strip routing.
-`wled.led_layout` defines how many LEDs are on each side, in the order
-`top → right → bottom → left`. The strip is assumed to start at the top-left
-and run clockwise.
+Set `wled.strip_start` and `wled.strip_direction` to match where physical LED 0 sits and
+which way the strip runs around the TV (viewed from the front). `wled.led_layout` defines
+how many LEDs are on each side in logical order `top → right → bottom → left` (any side
+may be `0` if unused). Restart `main.py` after changing strip routing.
+
+Example — strip starts bottom-right, runs counter-clockwise, no bottom LEDs:
+
+```yaml
+wled:
+  strip_start: bottom_right
+  strip_direction: ccw
+  led_layout:
+    top: 72
+    right: 40
+    bottom: 0
+    left: 40
+```
 
 ---
 

@@ -69,3 +69,29 @@ def test_extract_editable_excludes_simulator(base_config):
   assert "simulator" not in editable
   assert "camera" in editable
   assert "points" in editable["perspective"]
+
+
+def test_validate_patch_strip_routing():
+  validated = validate_patch({
+    "wled": {
+      "strip_start": "bottom_right",
+      "strip_direction": "ccw",
+      "led_layout": {"top": 72, "right": 40, "bottom": 0, "left": 40},
+    },
+  })
+  assert validated["wled"]["strip_start"] == "bottom_right"
+  assert validated["wled"]["strip_direction"] == "ccw"
+  assert validated["wled"]["led_layout"]["bottom"] == 0
+
+
+def test_validate_patch_rejects_all_zero_leds():
+  with pytest.raises(ConfigValidationError) as exc:
+    validate_patch({"wled": {"led_layout": {"bottom": 0}}})
+  assert "wled.led_layout" in exc.value.errors
+
+
+def test_validate_patch_rejects_invalid_strip_start():
+  with pytest.raises(ConfigValidationError) as exc:
+    validate_patch({"wled": {"strip_start": "middle"}})
+  assert "wled.strip_start" in exc.value.errors
+

@@ -10,7 +10,7 @@ up to 24fps via UDP.
 # Install dependencies
 pip install opencv-python numpy PyYAML scipy picamera2 pygame
 
-# Edit your WLED IP and LED count
+# Edit your WLED IP, LED count, and strip routing (start corner + direction)
 nano config/config.yaml
 
 # Calibrate camera perspective (point camera at TV)
@@ -38,5 +38,5 @@ python main.py --sim
 ## Running Tests
 
 ```bash
-pytest tests/ -v   # 80 tests, all pass without real hardware
+pytest tests/ -v   # all tests pass without real hardware
 ```

@@ -218,6 +218,9 @@ function renderPreviewMeta(meta) {
     if (t[k] !== undefined) html += `<tr><td>${k}</td><td>${t[k]}</td></tr>`;
   }
   html += `</table><p>LEDs: top ${meta.led_layout.top} + right ${meta.led_layout.right} + bottom ${meta.led_layout.bottom} + left ${meta.led_layout.left} = <strong>${meta.led_total}</strong></p>`;
+  if (meta.strip_start) {
+    html += `<p>Strip: start <strong>${meta.strip_start}</strong>, direction <strong>${meta.strip_direction || 'cw'}</strong></p>`;
+  }
   html += '<details><summary>RGB per side</summary><pre>' + JSON.stringify(meta.colors, null, 2) + '</pre></details>';
   el.innerHTML = html;
   if (config.perspective) config.perspective.points = meta.points;
@@ -511,6 +514,8 @@ class ServerState:
       "output_resolution": self.config["perspective"]["output_resolution"],
       "led_layout": layout,
       "led_total": total,
+      "strip_start": self.config["wled"].get("strip_start", "top_left"),
+      "strip_direction": self.config["wled"].get("strip_direction", "cw"),
       "timing_ms": timing,
       "colors": {"top": top, "right": right, "bottom": bottom, "left": left},
     }
