@@ -14,6 +14,9 @@ pip install opencv-python numpy PyYAML scipy picamera2 pygame
 nano config/config.yaml
 
 # Calibrate camera perspective (point camera at TV)
+# On Pi OS Lite (headless) — use the web UI from a phone or PC browser:
+python -m tools.web_config --port 8080 --exit-on-idle
+# Or with a display attached:
 python -m tools.calibrate_manual
 
 # Run
@@ -35,5 +38,5 @@ python main.py --sim
 ## Running Tests
 
 ```bash
-pytest tests/ -v   # 60 tests, all pass without real hardware
+pytest tests/ -v   # 80 tests, all pass without real hardware
 ```

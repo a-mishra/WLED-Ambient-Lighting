@@ -41,7 +41,27 @@ wled:
 The program needs to know where the TV corners appear in the camera frame.
 Run this **once** (or whenever the camera moves):
 
-### Option A — Manual (recommended for first setup)
+### Option A — Web UI (recommended for Pi OS Lite / SSH)
+
+Stop `main.py` first if it is running (only one process can use the camera at a time).
+
+```bash
+python -m tools.web_config --port 8080 --exit-on-idle --idle-timeout 300
+```
+
+Open `http://<pi-ip>:8080` from a phone or PC on the same network.
+
+1. **Preview** tab → **Capture** (grabs one camera frame)
+2. Click the four TV corners on the raw image: **TL → TR → BR → BL**
+3. **Save calibration**
+4. Use **Reprocess** after changing color/WLED settings to refresh the preview panels
+5. Tune other settings on the Camera / Color / WLED / Processing tabs
+
+The server does not touch the camera until you click Capture. With `--exit-on-idle`, it shuts down automatically after 5 minutes of no browser activity.
+
+> Config changes saved via the web UI take effect in `main.py` after you restart it.
+
+### Option B — Manual (display attached)
 
 Display a solid white image on the TV, then:
 
@@ -52,7 +72,7 @@ python -m tools.calibrate_manual
 Click the four corners of the TV in order: **TL → TR → BR → BL**.
 Press **Enter** to save. The points are written to `config/config.yaml`.
 
-### Option B — Automatic
+### Option C — Automatic
 
 ```bash
 # Show a solid white image on the TV first, then:

@@ -13,6 +13,8 @@ wled_ambient_lighting/
 ├── ambient/                    Core package
 │   ├── base.py                 Abstract interfaces: CameraBase, WLEDBase
 │   ├── config.py               YAML loader / saver
+│   ├── config_schema.py        Web UI validation + editable-field schema
+│   ├── pipeline_preview.py     Single-frame pipeline preview for web UI
 │   ├── camera.py               Real camera: PiCamera (Picamera2 + background thread)
 │   ├── perspective.py          Perspective correction: PerspectiveCorrector
 │   ├── color.py                Edge colour extraction + post-processing: EdgeColorExtractor
@@ -25,10 +27,14 @@ wled_ambient_lighting/
 │
 ├── tools/
 │   ├── calibrate_manual.py     Click four TV corners → saves perspective points
-│   └── calibrate_auto.py       Auto-detect TV via brightness → saves perspective points
+│   ├── calibrate_auto.py       Auto-detect TV via brightness → saves perspective points
+│   └── web_config.py           Browser UI: pipeline preview, calibration, config editor
 │
 ├── tests/
 │   ├── test_config.py          Config schema validation
+│   ├── test_config_schema.py   Web config patch validation
+│   ├── test_pipeline_preview.py  Pipeline preview rendering
+│   ├── test_web_config.py      Web HTTP server (no camera)
 │   ├── test_perspective.py     Warp accuracy with synthetic frames
 │   ├── test_color.py           Colour extraction and post-processing
 │   ├── test_smoother.py        EMA convergence and edge cases
