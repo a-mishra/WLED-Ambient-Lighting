@@ -70,7 +70,10 @@ _HTML_PAGE = r"""<!DOCTYPE html>
   .panels { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 12px; }
   .panel { background: #16213e; border-radius: 8px; padding: 10px; }
   .panel h3 { margin: 0 0 8px; font-size: 0.9rem; color: #aaa; }
-  .panel img { width: 100%; height: auto; border-radius: 4px; cursor: crosshair; background: #000; min-height: 120px; }
+  .img-wrap { position: relative; width: 100%; line-height: 0; }
+  .img-wrap img { width: 100%; height: auto; display: block; border-radius: 4px; background: #000; min-height: 120px; }
+  .img-wrap canvas { position: absolute; left: 0; top: 0; width: 100%; height: 100%; cursor: crosshair; touch-action: none; }
+  .panel img { width: 100%; height: auto; border-radius: 4px; background: #000; min-height: 120px; }
   .panel img.no-click { cursor: default; }
   .meta { background: #16213e; border-radius: 8px; padding: 12px; margin-top: 12px; font-size: 0.85rem; }
   .meta table { width: 100%; border-collapse: collapse; }
@@ -107,17 +110,24 @@ _HTML_PAGE = r"""<!DOCTYPE html>
       <button onclick="captureFrame()">Capture</button>
       <button onclick="captureFrame()">Retake</button>
       <button class="secondary" onclick="reprocess()">Reprocess</button>
-      <button class="secondary" onclick="resetPoints()">Reset points</button>
+      <button class="secondary" onclick="clearPoints()">Clear points</button>
+      <button class="secondary" onclick="loadSavedPoints()">Load saved</button>
       <button class="secondary" onclick="saveCalibration()">Save calibration</button>
     </div>
-    <p style="font-size:0.85rem;color:#aaa">Click the <strong>raw capture</strong> image: corners in order TL → TR → BR → BL. EMA smoothing applies at runtime only.</p>
+    <p style="font-size:0.85rem;color:#aaa">Click <strong>Capture</strong>, then click four corners on panel 1 in order: <strong>TL → TR → BR → BL</strong>. Use <strong>Clear points</strong> to start over.</p>
     <div class="panels">
-      <div class="panel"><h3>1. Raw capture</h3><img id="img-raw" alt="raw" onclick="onRawClick(event)"></div>
+      <div class="panel"><h3>1. Raw capture — click corners here</h3>
+        <div class="img-wrap" id="raw-wrap">
+          <img id="img-raw" alt="raw">
+          <canvas id="raw-canvas"></canvas>
+        </div>
+      </div>
       <div class="panel"><h3>2. Perspective corrected</h3><img id="img-warped" class="no-click" alt="warped"></div>
       <div class="panel"><h3>3. LED colors</h3><img id="img-overlay" class="no-click" alt="overlay"></div>
     </div>
     <div class="meta" id="preview-meta">Click Capture to load preview.</div>
-    <div class="cal-points" id="cal-points"></div>
+    <div class="cal-points" id="cal-clicked">Clicked (0/4): []</div>
+    <div class="cal-points" id="cal-saved"></div>
   </div>
   <div id="tab-camera" class="tab"><div class="form-section" id="form-camera"></div></div>
   <div id="tab-color" class="tab"><div class="form-section" id="form-color"></div></div>
@@ -144,13 +154,64 @@ async function api(method, path, body) {
 }
 function refreshImages() {
   const q = '?t=' + ts();
-  document.getElementById('img-raw').src = '/api/preview/raw.jpg' + q;
+  const img = document.getElementById('img-raw');
+  img.onload = () => { syncCanvasSize(); drawMarkers(); };
+  img.src = '/api/preview/raw.jpg' + q;
   document.getElementById('img-warped').src = '/api/preview/warped.jpg' + q;
   document.getElementById('img-overlay').src = '/api/preview/overlay.jpg' + q;
 }
+function syncCanvasSize() {
+  const img = document.getElementById('img-raw');
+  const canvas = document.getElementById('raw-canvas');
+  const wrap = document.getElementById('raw-wrap');
+  if (!img.naturalWidth) return;
+  canvas.width = img.clientWidth;
+  canvas.height = img.clientHeight;
+  wrap.style.height = img.clientHeight + 'px';
+}
+function drawMarkers() {
+  const canvas = document.getElementById('raw-canvas');
+  const img = document.getElementById('img-raw');
+  const ctx = canvas.getContext('2d');
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  if (!img.naturalWidth || clickPoints.length === 0) return;
+  const sx = canvas.width / img.naturalWidth;
+  const sy = canvas.height / img.naturalHeight;
+  const toScreen = (p) => [p[0] * sx, p[1] * sy];
+  if (clickPoints.length === 4) {
+    ctx.strokeStyle = '#00ff00';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    const s0 = toScreen(clickPoints[0]);
+    ctx.moveTo(s0[0], s0[1]);
+    for (let i = 1; i < 4; i++) {
+      const s = toScreen(clickPoints[i]);
+      ctx.lineTo(s[0], s[1]);
+    }
+    ctx.closePath();
+    ctx.stroke();
+  }
+  clickPoints.forEach((p, i) => {
+    const [x, y] = toScreen(p);
+    ctx.fillStyle = '#ff0000';
+    ctx.beginPath();
+    ctx.arc(x, y, 7, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = '#ffffff';
+    ctx.font = 'bold 14px system-ui,sans-serif';
+    ctx.fillText(String(i + 1), x + 10, y - 6);
+  });
+}
+function updateCalLabels() {
+  document.getElementById('cal-clicked').textContent =
+    'Clicked (' + clickPoints.length + '/4): ' + JSON.stringify(clickPoints);
+  const saved = config.perspective?.points || [];
+  document.getElementById('cal-saved').textContent =
+    'Saved in config: ' + JSON.stringify(saved);
+}
 function renderPreviewMeta(meta) {
   const el = document.getElementById('preview-meta');
-  if (!meta.has_cache) { el.innerHTML = 'No preview cached. Click <strong>Capture</strong>.'; return; }
+  if (!meta.has_cache) { el.innerHTML = 'No preview cached. Click <strong>Capture</strong>.'; updateCalLabels(); return; }
   const t = meta.timing_ms || {};
   let html = '<table><tr><th>Stage</th><th>ms</th></tr>';
   for (const k of ['capture','warp','extract','post_process']) {
@@ -159,14 +220,17 @@ function renderPreviewMeta(meta) {
   html += `</table><p>LEDs: top ${meta.led_layout.top} + right ${meta.led_layout.right} + bottom ${meta.led_layout.bottom} + left ${meta.led_layout.left} = <strong>${meta.led_total}</strong></p>`;
   html += '<details><summary>RGB per side</summary><pre>' + JSON.stringify(meta.colors, null, 2) + '</pre></details>';
   el.innerHTML = html;
-  document.getElementById('cal-points').textContent = 'Saved points: ' + JSON.stringify(meta.points);
-  clickPoints = meta.points.map(p => [...p]);
+  if (config.perspective) config.perspective.points = meta.points;
+  updateCalLabels();
 }
 async function captureFrame() {
   try {
     showBanner('Capturing…', 'warn');
+    clearPoints(false);
     const meta = await api('POST', '/api/preview/capture');
-    refreshImages(); renderPreviewMeta(meta); showBanner('Capture OK');
+    refreshImages();
+    renderPreviewMeta(meta);
+    showBanner('Capture OK — click 4 TV corners on panel 1');
   } catch (e) {
     showBanner(e.data?.message || e.data?.error || 'Capture failed', e.status === 503 ? 'warn' : 'err');
   }
@@ -174,27 +238,52 @@ async function captureFrame() {
 async function reprocess() {
   try {
     const meta = await api('POST', '/api/preview/reprocess');
-    refreshImages(); renderPreviewMeta(meta); showBanner('Reprocessed');
+    refreshImages();
+    renderPreviewMeta(meta);
+    showBanner('Reprocessed');
   } catch (e) { showBanner(e.data?.message || 'Reprocess failed', 'err'); }
 }
-function onRawClick(ev) {
-  if (clickPoints.length >= 4) return;
-  const img = ev.target;
+function pointerToImageCoords(clientX, clientY) {
+  const img = document.getElementById('img-raw');
+  if (!img.naturalWidth) return null;
   const rect = img.getBoundingClientRect();
-  clickPoints.push([Math.round((ev.clientX - rect.left) * (img.naturalWidth / rect.width)),
-    Math.round((ev.clientY - rect.top) * (img.naturalHeight / rect.height))]);
-  document.getElementById('cal-points').textContent = 'Clicked: ' + JSON.stringify(clickPoints);
+  const x = (clientX - rect.left) * (img.naturalWidth / rect.width);
+  const y = (clientY - rect.top) * (img.naturalHeight / rect.height);
+  return [Math.round(x), Math.round(y)];
 }
-function resetPoints() {
+function onRawPointer(ev) {
+  if (clickPoints.length >= 4) {
+    showBanner('Already have 4 points — Clear points to redo.', 'warn');
+    return;
+  }
+  const coords = pointerToImageCoords(ev.clientX, ev.clientY);
+  if (!coords) { showBanner('Wait for image to load.', 'warn'); return; }
+  clickPoints.push(coords);
+  drawMarkers();
+  updateCalLabels();
+  if (clickPoints.length === 4) showBanner('4 corners set — click Save calibration', 'ok');
+}
+function clearPoints(showMsg=true) {
+  clickPoints = [];
+  drawMarkers();
+  updateCalLabels();
+  if (showMsg) showBanner('Points cleared — click 4 corners on panel 1');
+}
+function loadSavedPoints() {
   clickPoints = (config.perspective?.points || []).map(p => [...p]);
-  document.getElementById('cal-points').textContent = 'Points reset to saved: ' + JSON.stringify(clickPoints);
+  drawMarkers();
+  updateCalLabels();
+  showBanner('Loaded saved points — edit or Clear to redo');
 }
 async function saveCalibration() {
-  if (clickPoints.length !== 4) { showBanner('Click exactly 4 corners first.', 'err'); return; }
+  if (clickPoints.length !== 4) { showBanner('Click exactly 4 corners first (' + clickPoints.length + '/4).', 'err'); return; }
   try {
     const meta = await api('POST', '/api/calibration', { points: clickPoints });
-    refreshImages(); renderPreviewMeta(meta);
-    config.perspective.points = meta.points; showBanner('Calibration saved');
+    refreshImages();
+    renderPreviewMeta(meta);
+    config.perspective.points = meta.points;
+    updateCalLabels();
+    showBanner('Calibration saved');
   } catch (e) { showBanner(JSON.stringify(e.data?.fields || e.data) || 'Save failed', 'err'); }
 }
 function fieldHtml(section, key, spec, value) {
@@ -257,13 +346,21 @@ async function init() {
   try {
     const res = await api('GET', '/api/config');
     config = res.config;
-    clickPoints = (config.perspective?.points || []).map(p => [...p]);
+    clearPoints(false);
     buildForm('camera', res.schema.camera, config.camera, 'form-camera');
     buildForm('color', res.schema.color, config.color, 'form-color');
     buildForm('wled', res.schema.wled, config.wled, 'form-wled');
     buildForm('processing', res.schema.processing, config.processing, 'form-processing');
     const meta = await api('GET', '/api/preview/meta');
-    if (meta.has_cache) { refreshImages(); renderPreviewMeta(meta); } else renderPreviewMeta(meta);
+    if (meta.has_cache) { refreshImages(); renderPreviewMeta(meta); }
+    else { renderPreviewMeta(meta); updateCalLabels(); }
+    const wrap = document.getElementById('raw-wrap');
+    wrap.addEventListener('click', onRawPointer);
+    wrap.addEventListener('touchstart', (e) => {
+      e.preventDefault();
+      if (e.touches.length) onRawPointer(e.touches[0]);
+    }, { passive: false });
+    window.addEventListener('resize', () => { syncCanvasSize(); drawMarkers(); });
   } catch (e) { showBanner('Failed to load config', 'err'); }
 }
 init();
@@ -316,7 +413,8 @@ class ServerState:
     self.raw_frame = raw
     self.preview = preview
     self.capture_ms = capture_ms
-    self.jpeg_raw = encode_jpeg(preview.raw_annotated)
+    # Plain raw frame for calibration clicks (no server-drawn quad)
+    self.jpeg_raw = encode_jpeg(raw)
     self.jpeg_warped = encode_jpeg(preview.warped_annotated)
     self.jpeg_overlay = encode_jpeg(preview.led_overlay)
 
