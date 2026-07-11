@@ -153,7 +153,7 @@ _HTML_PAGE = r"""<!DOCTYPE html>
           <canvas id="raw-canvas"></canvas>
         </div>
       </div>
-      <div class="panel"><h3>2. Perspective corrected</h3><img id="img-warped" class="no-click" alt="warped"></div>
+      <div class="panel"><h3 id="warped-panel-title">2. Perspective corrected — sampling bands</h3><img id="img-warped" class="no-click" alt="warped"></div>
       <div class="panel"><h3>3. LED colors</h3><img id="img-overlay" class="no-click" alt="overlay"></div>
     </div>
     <div class="meta" id="preview-meta">Click Capture to load preview.</div>
@@ -342,6 +342,22 @@ function renderPreviewMeta(meta) {
   html += `</table><p>LEDs: top ${meta.led_layout.top} + right ${meta.led_layout.right} + bottom ${meta.led_layout.bottom} + left ${meta.led_layout.left} = <strong>${meta.led_total}</strong></p>`;
   if (meta.strip_start) {
     html += `<p>Strip: start <strong>${meta.strip_start}</strong>, direction <strong>${meta.strip_direction || 'cw'}</strong></p>`;
+  }
+  if (meta.sampling) {
+    const sm = meta.sampling;
+    html += `<p>Sampling bands: <strong>${sm.depth_h_px}px</strong> (top/bottom) × <strong>${sm.depth_w_px}px</strong> (left/right)`;
+    html += sm.show_bands ? ' — <span style="color:#52b788">shown on panel 2</span>' : ' — hidden on panel 2';
+    html += '</p><table><tr><th>Side</th><th>LEDs</th><th>Mode</th></tr>';
+    for (const side of ['top','right','bottom','left']) {
+      const s = sm.sides[side] || {};
+      const mode = s.mode === 'no_leds' ? '—' : (s.active ? 'sample' : s.mode);
+      html += `<tr><td>${side}</td><td>${s.leds ?? 0}</td><td>${mode}</td></tr>`;
+    }
+    html += '</table>';
+    const title = document.getElementById('warped-panel-title');
+    if (title) title.textContent = sm.show_bands
+      ? '2. Perspective corrected — cyan=sample, red=disabled fill'
+      : '2. Perspective corrected';
   }
   html += '<details><summary>RGB per side</summary><pre>' + JSON.stringify(meta.colors, null, 2) + '</pre></details>';
   el.innerHTML = html;
@@ -699,6 +715,7 @@ class ServerState:
       "strip_direction": self.config["wled"].get("strip_direction", "cw"),
       "timing_ms": timing,
       "colors": {"top": top, "right": right, "bottom": bottom, "left": left},
+      "sampling": p.sampling_meta,
     }
 
 

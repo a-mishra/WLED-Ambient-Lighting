@@ -9,6 +9,8 @@ from typing import Any
 
 import yaml
 
+from .edge_sampling import parse_edge_sampling
+
 EDITABLE_TOP_LEVEL = frozenset({"camera", "perspective", "color", "wled", "processing"})
 FORBIDDEN_PATCH_KEYS = frozenset({"simulator"})
 
@@ -38,7 +40,51 @@ def get_editable_schema() -> dict:
       "output_resolution": {"type": "resolution", "label": "Output resolution [W, H]"},
     },
     "color": {
-      "edge_depth": {"type": "float", "label": "Edge depth", "min": 0.01, "max": 0.5, "step": 0.01},
+      "edge_depth": {
+        "horizontal": {
+          "type": "float",
+          "label": "Top/bottom band depth (fraction of height)",
+          "min": 0.01,
+          "max": 0.5,
+          "step": 0.01,
+        },
+        "vertical": {
+          "type": "float",
+          "label": "Left/right band depth (fraction of width)",
+          "min": 0.01,
+          "max": 0.5,
+          "step": 0.01,
+        },
+      },
+      "sampling_enabled": {
+        "top": {"type": "bool", "label": "Sample top edge"},
+        "right": {"type": "bool", "label": "Sample right edge"},
+        "bottom": {"type": "bool", "label": "Sample bottom edge"},
+        "left": {"type": "bool", "label": "Sample left edge"},
+      },
+      "sampling_disabled_color": {
+        "top": {
+          "type": "enum",
+          "label": "Top fill when disabled",
+          "options": ["black", "brightness_floor"],
+        },
+        "right": {
+          "type": "enum",
+          "label": "Right fill when disabled",
+          "options": ["black", "brightness_floor"],
+        },
+        "bottom": {
+          "type": "enum",
+          "label": "Bottom fill when disabled",
+          "options": ["black", "brightness_floor"],
+        },
+        "left": {
+          "type": "enum",
+          "label": "Left fill when disabled",
+          "options": ["black", "brightness_floor"],
+        },
+      },
+      "show_sampling_bands": {"type": "bool", "label": "Show sampling bands on preview"},
       "use_remap": {"type": "bool", "label": "Use remap (skip full warp)"},
       "saturation_boost": {"type": "float", "label": "Saturation boost", "min": 0.5, "max": 3.0, "step": 0.1},
       "brightness_floor": {"type": "int", "label": "Brightness floor", "min": 0, "max": 255},
@@ -92,6 +138,17 @@ def get_editable_schema() -> dict:
   }
 
 
+def normalize_color_for_ui(color: dict) -> dict:
+  """Expand legacy flat edge_depth and fill sampling defaults for web forms."""
+  cfg = parse_edge_sampling(color)
+  out = copy.deepcopy(color)
+  out["edge_depth"] = {"horizontal": cfg.depth_h_frac, "vertical": cfg.depth_w_frac}
+  out["sampling_enabled"] = dict(cfg.enabled)
+  out["sampling_disabled_color"] = dict(cfg.disabled_color)
+  out["show_sampling_bands"] = cfg.show_sampling_bands
+  return out
+
+
 def extract_editable_config(config: dict) -> dict:
   """Return only the sections editable via the web UI."""
   return {
@@ -100,7 +157,7 @@ def extract_editable_config(config: dict) -> dict:
       "output_resolution": copy.deepcopy(config["perspective"]["output_resolution"]),
       "points": copy.deepcopy(config["perspective"]["points"]),
     },
-    "color": copy.deepcopy(config.get("color", {})),
+    "color": normalize_color_for_ui(config.get("color", {})),
     "wled": copy.deepcopy(config.get("wled", {})),
     "processing": copy.deepcopy(config.get("processing", {})),
   }
@@ -241,9 +298,53 @@ def validate_patch(patch: dict) -> dict:
     else:
       out = {}
       if "edge_depth" in col:
-        v = _validate_float(col["edge_depth"], "color.edge_depth", 0.01, 0.5, errors)
-        if v is not None:
-          out["edge_depth"] = v
+        ed = col["edge_depth"]
+        if isinstance(ed, dict):
+          ed_out: dict = {}
+          if "horizontal" in ed:
+            v = _validate_float(ed["horizontal"], "color.edge_depth.horizontal", 0.01, 0.5, errors)
+            if v is not None:
+              ed_out["horizontal"] = v
+          if "vertical" in ed:
+            v = _validate_float(ed["vertical"], "color.edge_depth.vertical", 0.01, 0.5, errors)
+            if v is not None:
+              ed_out["vertical"] = v
+          if ed_out:
+            out["edge_depth"] = ed_out
+        else:
+          v = _validate_float(ed, "color.edge_depth", 0.01, 0.5, errors)
+          if v is not None:
+            out["edge_depth"] = v
+      if "sampling_enabled" in col:
+        se = col["sampling_enabled"]
+        if not isinstance(se, dict):
+          errors["color.sampling_enabled"] = "must be an object"
+        else:
+          se_out: dict = {}
+          for side in ("top", "right", "bottom", "left"):
+            if side in se:
+              se_out[side] = bool(se[side])
+          if se_out:
+            out["sampling_enabled"] = se_out
+      if "sampling_disabled_color" in col:
+        sdc = col["sampling_disabled_color"]
+        if not isinstance(sdc, dict):
+          errors["color.sampling_disabled_color"] = "must be an object"
+        else:
+          sdc_out: dict = {}
+          for side in ("top", "right", "bottom", "left"):
+            if side in sdc:
+              mode = str(sdc[side]).lower()
+              if mode not in ("black", "brightness_floor"):
+                errors[f"color.sampling_disabled_color.{side}"] = (
+                  "must be black or brightness_floor"
+                )
+              else:
+                sdc_out[side] = mode
+          if sdc_out:
+            out["sampling_disabled_color"] = sdc_out
+      if "show_sampling_bands" in col:
+        out["show_sampling_bands"] = bool(col["show_sampling_bands"])
       if "use_remap" in col:
         out["use_remap"] = bool(col["use_remap"])
       if "saturation_boost" in col:

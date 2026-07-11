@@ -10,6 +10,7 @@ To use a different config file: `python main.py --config path/to/config.yaml`.
 ```yaml
 camera:
   resolution: [320, 240]
+  rgb_swap: false
   awb_enable: true
   ae_enable: true
   analogue_gain: 3.0
@@ -50,7 +51,20 @@ perspective:
 
 ```yaml
 color:
-  edge_depth: 0.05
+  edge_depth:
+    horizontal: 0.05
+    vertical: 0.05
+  sampling_enabled:
+    top: true
+    right: true
+    bottom: true
+    left: true
+  sampling_disabled_color:
+    top: black
+    right: black
+    bottom: black
+    left: black
+  show_sampling_bands: true
   use_remap: false
   saturation_boost: 1.3
   brightness_floor: 10
@@ -65,7 +79,12 @@ color:
 
 | Key | Type | Default | Description |
 |---|---|---|---|
-| `edge_depth` | float | `0.05` | Fraction of the output frame's height/width to sample from each edge. `0.05` = the outermost 5% of pixels. Increase for a thicker sampling band (more averaged, more stable). Decrease to reduce sampling time. |
+| `edge_depth` | float or object | `0.05` | Sampling band depth. Legacy flat float applies to both axes. Prefer `horizontal` (top/bottom, fraction of output height) and `vertical` (left/right, fraction of output width). |
+| `edge_depth.horizontal` | float | `0.05` | Top and bottom band depth as a fraction of warped frame height. |
+| `edge_depth.vertical` | float | `0.05` | Left and right band depth as a fraction of warped frame width. |
+| `sampling_enabled` | object | all `true` | Per-side toggles. When `false` but `led_layout` for that side is > 0, LEDs are filled with `sampling_disabled_color` instead of camera pixels. |
+| `sampling_disabled_color` | object | all `black` | Fill mode per side when sampling is disabled: `black` or `brightness_floor`. |
+| `show_sampling_bands` | bool | `true` | Draw sampling bands on web preview panel 2 (cyan = active, red = disabled fill). |
 | `use_remap` | bool | `false` | When `true`, bypasses `warpPerspective` entirely. Pre-computed `cv2.remap` maps are built at startup; only the 4 edge strips are sampled from the raw frame (~5× fewer pixels computed). Enable this if benchmark shows `warp` is your bottleneck after trying a smaller `output_resolution`. |
 
 ### Post-processing
@@ -148,6 +167,8 @@ processing:
   log_file: app.log
   benchmark_mode: false
   opencv_threads: 1
+  ambient_service_unit: wled-ambient.service
+  ambient_use_systemd_user: true
 ```
 
 | Key | Type | Default | Description |
@@ -157,6 +178,8 @@ processing:
 | `log_file` | string | `app.log` | Log file path. Relative to the project root. Logs go to both file and stdout. Set to `""` or remove to disable file logging. |
 | `benchmark_mode` | bool | `false` | When `true`, logs the wall-clock time of every pipeline stage for every frame: `[BENCH] cap=0.0ms warp=3.8ms ext=2.9ms post=0.3ms smo=0.4ms send=0.9ms total=8.3ms`. Use this to find your bottleneck and decide whether to enable `use_remap`, reduce `output_resolution`, or change `opencv_threads`. |
 | `opencv_threads` | int | `1` | Passed to `cv2.setNumThreads()` at startup. On Pi Zero 2W, `1` is usually faster for small frame sizes because thread synchronisation overhead outweighs any parallelism benefit. On Pi 4 with large frames, try `4`. |
+| `ambient_service_unit` | string | `wled-ambient.service` | Systemd unit name for the web UI **Start ambient** / **Stop ambient** buttons. Set to `""` to run `main.py` as a subprocess instead of `systemctl --user`. |
+| `ambient_use_systemd_user` | bool | `true` | When `true`, use `systemctl --user` for ambient control. Install units with `bash scripts/install-systemd.sh`. |
 
 ---
 

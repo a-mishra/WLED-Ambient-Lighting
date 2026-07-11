@@ -53,9 +53,13 @@ def test_render_led_overlay_larger_than_warped():
 
 
 def test_annotate_warped_changes_pixels():
+  from ambient.edge_sampling import parse_edge_sampling
+
   warped = np.zeros((90, 160, 3), dtype=np.uint8)
   warped[:, :] = [50, 50, 50]
-  annotated = annotate_warped(warped, edge_depth=0.05)
+  sampling = parse_edge_sampling({"edge_depth": 0.05, "show_sampling_bands": True})
+  layout = {"top": 8, "right": 4, "bottom": 8, "left": 4}
+  annotated = annotate_warped(warped, sampling, layout)
   assert not np.array_equal(annotated, warped)
   # Top band should differ from interior
   assert not np.array_equal(annotated[0, 80], warped[45, 80])
@@ -67,3 +71,5 @@ def test_timing_keys_present():
   assert "warp" in result.timing_ms
   assert "extract" in result.timing_ms
   assert "post_process" in result.timing_ms
+  assert "depth_h_px" in result.sampling_meta
+  assert "sides" in result.sampling_meta

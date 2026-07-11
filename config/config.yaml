@@ -18,8 +18,21 @@ perspective:
     - [98, 107]
 
 color:
-  # fraction of output frame height/width to sample from each edge
-  edge_depth: 0.05
+  # sampling band depth — horizontal applies to top/bottom, vertical to left/right
+  edge_depth:
+    horizontal: 0.05
+    vertical: 0.05
+  sampling_enabled:
+    top: true
+    right: true
+    bottom: true
+    left: true
+  sampling_disabled_color:   # when enabled=false but led_layout > 0
+    top: black               # black | brightness_floor
+    right: black
+    bottom: black
+    left: black
+  show_sampling_bands: true
   # set true to bypass full warpPerspective — pre-computes cv2.remap maps for edge
   # strips only (~5x fewer pixels). Requires use_remap-compatible EdgeColorExtractor init.
   use_remap: false

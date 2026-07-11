@@ -55,6 +55,7 @@ Open `http://<pi-ip>:8080` from a phone or PC on the same network.
 2. Click the four TV corners on the raw image: **TL → TR → BR → BL**
 3. **Save calibration**
 4. Use **Reprocess** after changing color/WLED settings to refresh the preview panels
+   - Panel 2 overlays sampling bands (cyan = sampling, red = disabled fill) when `show_sampling_bands` is on
 5. Tune other settings on the Camera / Color / WLED / Processing tabs
 
 The server does not touch the camera until you click Capture. With `--exit-on-idle`, it shuts down automatically after 5 minutes of no browser activity.
@@ -149,7 +150,7 @@ journalctl --user -u wled-ambient.service -f
 pytest tests/ -v
 ```
 
-All 60 tests run without real hardware (picamera2, WLED, or a display).
+All 109 tests run without real hardware (picamera2, WLED, or a display).
 
 ---
 
@@ -159,12 +160,47 @@ All 60 tests run without real hardware (picamera2, WLED, or a display).
 
 1. Enable benchmark mode (`processing.benchmark_mode: true`) to see which stage is slow.
 2. If `warp` is the bottleneck, the `output_resolution` is too large. Try `[120, 68]`.
-3. If `ext` is slow, reduce `color.edge_depth` (e.g. `0.03` instead of `0.05`).
+3. If `ext` is slow, reduce sampling band depth — e.g. `color.edge_depth.horizontal` and
+   `color.edge_depth.vertical` to `0.03` (legacy flat `edge_depth: 0.03` still works).
 4. Enable remap mode (`color.use_remap: true`) to skip the full warp — the
    extractor then samples the raw frame directly using pre-computed maps.
 
+### Per-edge sampling bands
+
+The extractor samples a band of pixels along each TV edge. Depth is configurable per axis:
+
+```yaml
+color:
+  edge_depth:
+    horizontal: 0.05   # top and bottom — fraction of warped frame height
+    vertical: 0.05     # left and right — fraction of warped frame width
+```
+
+Use **horizontal** for wider top/bottom bands (more averaging, stabler colours) and
+**vertical** for left/right independently — helpful when the warped frame is wide but short.
+
+**Per-side enable** — turn sampling off for a side that still has LEDs (e.g. you want that
+segment dark or at a fixed glow):
+
+```yaml
+color:
+  sampling_enabled:
+    top: true
+    right: true
+    bottom: false
+    left: true
+  sampling_disabled_color:
+    bottom: black              # black | brightness_floor
+```
+
+When `led_layout` for a side is `0`, that side is skipped entirely (no sampling, no fill).
+
+In the web UI **Preview** tab, panel 2 draws bands when `show_sampling_bands: true`.
+The meta table lists pixel depths and each side’s mode (`sample`, `black`, `brightness_floor`).
+
 ### If colours look wrong
 
+- Enable `camera.rgb_swap: true` (web UI **Camera** tab) if red and blue are swapped.
 - Run calibration again (`calibrate_manual.py`) — the camera may have moved.
 - Increase `color.saturation_boost` (e.g. `1.5`) if colours look washed out.
 - Adjust `color.gamma`: `2.2` is standard; lower values (e.g. `1.8`) make LEDs

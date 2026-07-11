@@ -13,7 +13,12 @@ import cv2
 import numpy as np
 
 from .color import EdgeColorExtractor
+from .edge_sampling import EdgeSamplingConfig, SIDES, parse_edge_sampling
 from .perspective import PerspectiveCorrector
+
+_BAND_COLOR_ENABLED = (0, 200, 255)
+_BAND_COLOR_DISABLED = (180, 80, 80)
+_BAND_ALPHA = 0.35
 
 
 @dataclass
@@ -25,6 +30,7 @@ class PreviewResult:
   colors_final: np.ndarray
   timing_ms: dict[str, float]
   led_layout: dict[str, int]
+  sampling_meta: dict
 
 
 def annotate_raw(frame: np.ndarray, points: list[list[int]]) -> np.ndarray:
@@ -42,22 +48,71 @@ def annotate_raw(frame: np.ndarray, points: list[list[int]]) -> np.ndarray:
   return out
 
 
-def annotate_warped(warped: np.ndarray, edge_depth: float) -> np.ndarray:
+def annotate_warped(
+  warped: np.ndarray,
+  sampling: EdgeSamplingConfig,
+  led_layout: dict[str, int],
+) -> np.ndarray:
   """Draw semi-transparent edge sampling bands on the warped frame."""
   out = warped.copy()
-  h, w = out.shape[:2]
-  depth_h = max(1, int(h * edge_depth))
-  depth_w = max(1, int(w * edge_depth))
-  overlay = out.copy()
-  alpha = 0.35
-  color = (0, 200, 255)
+  if not sampling.show_sampling_bands:
+    return out
 
-  cv2.rectangle(overlay, (0, 0), (w, depth_h), color, -1)
-  cv2.rectangle(overlay, (0, h - depth_h), (w, h), color, -1)
-  cv2.rectangle(overlay, (0, 0), (depth_w, h), color, -1)
-  cv2.rectangle(overlay, (w - depth_w, 0), (w, h), color, -1)
-  cv2.addWeighted(overlay, alpha, out, 1 - alpha, 0, out)
+  h, w = out.shape[:2]
+  depth_h, depth_w = sampling.depth_pixels(w, h)
+  overlay = out.copy()
+
+  def _draw_band(rect: tuple[int, int, int, int], color: tuple[int, int, int]) -> None:
+    cv2.rectangle(overlay, rect[:2], rect[2:], color, -1)
+
+  if led_layout.get("top", 0) > 0:
+    color = _BAND_COLOR_ENABLED if sampling.enabled["top"] else _BAND_COLOR_DISABLED
+    _draw_band((0, 0, w, depth_h), color)
+
+  if led_layout.get("bottom", 0) > 0:
+    color = _BAND_COLOR_ENABLED if sampling.enabled["bottom"] else _BAND_COLOR_DISABLED
+    _draw_band((0, h - depth_h, w, h), color)
+
+  if led_layout.get("left", 0) > 0:
+    color = _BAND_COLOR_ENABLED if sampling.enabled["left"] else _BAND_COLOR_DISABLED
+    _draw_band((0, 0, depth_w, h), color)
+
+  if led_layout.get("right", 0) > 0:
+    color = _BAND_COLOR_ENABLED if sampling.enabled["right"] else _BAND_COLOR_DISABLED
+    _draw_band((w - depth_w, 0, w, h), color)
+
+  cv2.addWeighted(overlay, _BAND_ALPHA, out, 1 - _BAND_ALPHA, 0, out)
   return out
+
+
+def build_sampling_meta(
+  sampling: EdgeSamplingConfig,
+  led_layout: dict[str, int],
+  out_w: int,
+  out_h: int,
+) -> dict:
+  """Summary for web preview meta panel."""
+  depth_h, depth_w = sampling.depth_pixels(out_w, out_h)
+  sides: dict[str, dict] = {}
+  for side in SIDES:
+    n_leds = led_layout.get(side, 0)
+    if n_leds <= 0:
+      sides[side] = {"leds": 0, "active": False, "mode": "no_leds"}
+      continue
+    enabled = sampling.enabled.get(side, True)
+    sides[side] = {
+      "leds": n_leds,
+      "active": enabled,
+      "mode": "sample" if enabled else sampling.disabled_color.get(side, "black"),
+    }
+  return {
+    "depth_h_px": depth_h,
+    "depth_w_px": depth_w,
+    "depth_h_frac": sampling.depth_h_frac,
+    "depth_w_frac": sampling.depth_w_frac,
+    "show_bands": sampling.show_sampling_bands,
+    "sides": sides,
+  }
 
 
 def _split_colors(colors: np.ndarray, layout: dict[str, int]) -> tuple[np.ndarray, ...]:
@@ -95,26 +150,31 @@ def render_led_overlay(
   n_bottom = led_layout["bottom"]
   n_left = led_layout["left"]
 
-  led_w_h = max(1, preview_w // n_top)
-  led_h_v = max(1, preview_h // n_right)
-
   top_c, right_c, bottom_c, left_c = _split_colors(colors, led_layout)
 
-  for j, c in enumerate(top_c):
-    x1 = s + j * led_w_h
-    cv2.rectangle(canvas, (x1, 0), (x1 + led_w_h, s), c.tolist(), -1)
+  if n_top > 0:
+    led_w_h = max(1, preview_w // n_top)
+    for j, c in enumerate(top_c):
+      x1 = s + j * led_w_h
+      cv2.rectangle(canvas, (x1, 0), (x1 + led_w_h, s), c.tolist(), -1)
 
-  for j, c in enumerate(bottom_c):
-    x1 = s + j * led_w_h
-    cv2.rectangle(canvas, (x1, win_h - s), (x1 + led_w_h, win_h), c.tolist(), -1)
+  if n_bottom > 0:
+    led_w_h = max(1, preview_w // n_bottom)
+    for j, c in enumerate(bottom_c):
+      x1 = s + j * led_w_h
+      cv2.rectangle(canvas, (x1, win_h - s), (x1 + led_w_h, win_h), c.tolist(), -1)
 
-  for j, c in enumerate(left_c):
-    y1 = s + j * led_h_v
-    cv2.rectangle(canvas, (0, y1), (s, y1 + led_h_v), c.tolist(), -1)
+  if n_left > 0:
+    led_h_v = max(1, preview_h // n_left)
+    for j, c in enumerate(left_c):
+      y1 = s + j * led_h_v
+      cv2.rectangle(canvas, (0, y1), (s, y1 + led_h_v), c.tolist(), -1)
 
-  for j, c in enumerate(right_c):
-    y1 = s + j * led_h_v
-    cv2.rectangle(canvas, (win_w - s, y1), (win_w, y1 + led_h_v), c.tolist(), -1)
+  if n_right > 0:
+    led_h_v = max(1, preview_h // n_right)
+    for j, c in enumerate(right_c):
+      y1 = s + j * led_h_v
+      cv2.rectangle(canvas, (win_w - s, y1), (win_w, y1 + led_h_v), c.tolist(), -1)
 
   return canvas
 
@@ -122,8 +182,9 @@ def render_led_overlay(
 def process_frame(config: dict, raw_frame: np.ndarray) -> PreviewResult:
   """Run warp → extract → post_process and build preview images."""
   points = config["perspective"]["points"]
-  edge_depth = float(config["color"]["edge_depth"])
   led_layout = config["wled"]["led_layout"]
+  out_w, out_h = config["perspective"]["output_resolution"]
+  sampling = parse_edge_sampling(config["color"])
 
   t0 = time.perf_counter()
   corrector = PerspectiveCorrector(config)
@@ -144,8 +205,9 @@ def process_frame(config: dict, raw_frame: np.ndarray) -> PreviewResult:
   t_post = (time.perf_counter() - t0) * 1000
 
   raw_annotated = annotate_raw(raw_frame, points)
-  warped_annotated = annotate_warped(warped, edge_depth)
+  warped_annotated = annotate_warped(warped, sampling, led_layout)
   led_overlay = render_led_overlay(warped, colors_final, led_layout)
+  sampling_meta = build_sampling_meta(sampling, led_layout, out_w, out_h)
 
   return PreviewResult(
     raw_annotated=raw_annotated,
@@ -159,6 +221,7 @@ def process_frame(config: dict, raw_frame: np.ndarray) -> PreviewResult:
       "post_process": round(t_post, 2),
     },
     led_layout=dict(led_layout),
+    sampling_meta=sampling_meta,
   )
 
 

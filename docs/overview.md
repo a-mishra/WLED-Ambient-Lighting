@@ -7,9 +7,10 @@ ambient backlight. It continuously:
 
 1. Captures a frame from the camera pointing at the TV
 2. Corrects the perspective so the TV fills the frame perfectly
-3. Samples the average colour along each edge of the corrected image
+3. Samples the average colour along configurable bands on each enabled edge
 4. Post-processes colours (saturation, gamma, smoothing)
-5. Sends the colours to a WLED controller over UDP
+5. Permutes logical edge order to physical strip wiring
+6. Sends the colours to a WLED controller over UDP
 
 The result is a bias lighting effect where the LEDs behind the TV glow with the
 colours currently shown on screen.

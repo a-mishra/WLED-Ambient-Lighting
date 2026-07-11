@@ -91,6 +91,32 @@ def test_validate_patch_rejects_all_zero_leds():
   assert "wled.led_layout" in exc.value.errors
 
 
+def test_validate_patch_nested_edge_depth():
+  validated = validate_patch({
+    "color": {
+      "edge_depth": {"horizontal": 0.06, "vertical": 0.04},
+      "sampling_enabled": {"bottom": False},
+      "sampling_disabled_color": {"bottom": "brightness_floor"},
+      "show_sampling_bands": False,
+    },
+  })
+  assert validated["color"]["edge_depth"]["horizontal"] == 0.06
+  assert validated["color"]["sampling_enabled"]["bottom"] is False
+  assert validated["color"]["sampling_disabled_color"]["bottom"] == "brightness_floor"
+  assert validated["color"]["show_sampling_bands"] is False
+
+
+def test_validate_patch_legacy_flat_edge_depth():
+  validated = validate_patch({"color": {"edge_depth": 0.07}})
+  assert validated["color"]["edge_depth"] == 0.07
+
+
+def test_validate_patch_rejects_invalid_disabled_color():
+  with pytest.raises(ConfigValidationError) as exc:
+    validate_patch({"color": {"sampling_disabled_color": {"top": "red"}}})
+  assert "color.sampling_disabled_color.top" in exc.value.errors
+
+
 def test_validate_patch_rejects_invalid_strip_start():
   with pytest.raises(ConfigValidationError) as exc:
     validate_patch({"wled": {"strip_start": "middle"}})

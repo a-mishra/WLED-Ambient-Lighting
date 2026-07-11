@@ -14,12 +14,15 @@ wled_ambient_lighting/
 │   ├── base.py                 Abstract interfaces: CameraBase, WLEDBase
 │   ├── config.py               YAML loader / saver
 │   ├── config_schema.py        Web UI validation + editable-field schema
+│   ├── edge_sampling.py        Per-side band depth, enable flags, disabled fill
 │   ├── pipeline_preview.py     Single-frame pipeline preview for web UI
 │   ├── camera.py               Real camera: PiCamera (Picamera2 + background thread)
 │   ├── perspective.py          Perspective correction: PerspectiveCorrector
 │   ├── color.py                Edge colour extraction + post-processing: EdgeColorExtractor
+│   ├── strip_map.py            Logical → physical LED order: StripMapper
 │   ├── smoother.py             Temporal smoothing: EMASmoother
 │   ├── wled.py                 Real WLED UDP output: WLEDController
+│   ├── service_manager.py      Start/stop ambient via systemd or subprocess
 │   ├── factory.py              Wires config → real or simulated instances
 │   └── sim/
 │       ├── sim_camera.py       Simulated camera: video / image / synthetic frames
@@ -28,12 +31,15 @@ wled_ambient_lighting/
 ├── tools/
 │   ├── calibrate_manual.py     Click four TV corners → saves perspective points
 │   ├── calibrate_auto.py       Auto-detect TV via brightness → saves perspective points
-│   └── web_config.py           Browser UI: pipeline preview, calibration, config editor
+│   └── web_config.py           Browser UI: preview, calibration, config, Start/Stop ambient
 │
 ├── tests/
 │   ├── test_config.py          Config schema validation
 │   ├── test_config_schema.py   Web config patch validation
+│   ├── test_edge_sampling.py   Per-side sampling config and extraction
 │   ├── test_pipeline_preview.py  Pipeline preview rendering
+│   ├── test_strip_map.py       Strip routing permutation
+│   ├── test_service_manager.py Systemd / subprocess ambient control
 │   ├── test_web_config.py      Web HTTP server (no camera)
 │   ├── test_perspective.py     Warp accuracy with synthetic frames
 │   ├── test_color.py           Colour extraction and post-processing
@@ -72,6 +78,10 @@ EdgeColorExtractor.post_process()
 EMASmoother.smooth()
         │
         │  smoothed LED colours  (n_leds × 3  uint8)
+        ▼
+StripMapper.to_physical()             ← permute logical → wire order
+        │
+        │  physical-order LED colours
         ▼
 WLEDBase.send()
         │
@@ -121,14 +131,32 @@ reuses it every frame.
 
 ---
 
+### `ambient/edge_sampling.py`
+Parses `color.edge_depth`, `sampling_enabled`, `sampling_disabled_color`, and
+`show_sampling_bands` from config. Supports legacy flat `edge_depth: 0.05` as well as
+split `horizontal` / `vertical` depths. Used by `EdgeColorExtractor` and
+`pipeline_preview.annotate_warped()`.
+
+---
+
 ### `ambient/color.py` — `EdgeColorExtractor`
 
 **Extraction (two modes):**
 
 | Mode | How it works |
 |---|---|
-| `use_remap: false` (default) | Receives the warped frame; slices each edge strip; calls `cv2.resize(strip, (n_leds, 1), INTER_AREA)` — one C-level call per side (4 total) |
-| `use_remap: true` | Pre-computes `cv2.remap` float32 maps at startup for only the 4 edge strips (~5× fewer pixels than a full warp); samples raw frame directly each loop |
+| `use_remap: false` (default) | Receives the warped frame; slices each edge strip using per-axis band depth; calls `cv2.resize(strip, (n_leds, 1), INTER_AREA)` — one C-level call per active side |
+| `use_remap: true` | Pre-computes `cv2.remap` float32 maps at startup for enabled edge strips only; samples raw frame directly each loop |
+
+**Per-side behaviour:**
+
+| `led_layout` | `sampling_enabled` | Result |
+|---|---|---|
+| `0` | any | Side omitted from output |
+| `> 0` | `true` | Sample camera pixels from band |
+| `> 0` | `false` | Fill LEDs with `black` or `brightness_floor` |
+
+Remap maps are built only for sides that are both enabled and have LEDs.
 
 **Why `cv2.resize(INTER_AREA)`?**
 `INTER_AREA` is OpenCV's proper area-averaging downsampler. Resizing a
@@ -147,6 +175,30 @@ C-level call with no Python loops and handles non-integer ratios cleanly.
 
 Steps 2 and 3 are combined into a single 256-entry `uint8` LUT built once at
 startup. Per frame: `lut[colors]` — a single numpy index operation.
+
+---
+
+### `ambient/strip_map.py` — `StripMapper`
+Maps colours from logical TV-edge order (top → right → bottom → left) to physical
+wire order using `wled.strip_start` and `wled.strip_direction`. Applied after
+smoothing, before `WLEDController.send()`.
+
+---
+
+### `ambient/pipeline_preview.py`
+Runs one frame through warp → extract → post_process for the web UI. Renders:
+
+1. Raw frame with perspective quad
+2. Warped frame with optional sampling-band overlay (cyan/red)
+3. LED colour blocks around the warped preview
+
+Exposes `sampling_meta` (pixel depths, per-side mode) for the preview meta panel.
+
+---
+
+### `ambient/service_manager.py` — `AmbientServiceManager`
+Starts and stops `main.py` via `systemctl --user` (default) or a subprocess fallback.
+Used by the web UI service bar (`processing.ambient_service_unit`).
 
 ---
 
@@ -240,6 +292,17 @@ The pygame window layout:
 │                                               │
 +──[■■■■■■■■■■■■■■ bottom LEDs ■■■■■■■■■■■■■■]──+
 ```
+
+---
+
+### `tools/web_config.py`
+HTTP server for headless Pi setup:
+
+- **Preview** tab — capture, corner calibration, three-panel debug view (raw / warped with sampling bands / LED overlay)
+- **Config tabs** — Camera, Perspective, Color (per-edge sampling), WLED, Processing
+- **Service bar** — start/stop ambient pipeline via systemd or subprocess
+
+Install as `wled-web-config.service` with `scripts/install-systemd.sh`.
 
 ---
 
