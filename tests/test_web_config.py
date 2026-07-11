@@ -14,7 +14,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from ambient.config_schema import CameraBusyError
-from ambient.service_manager import AmbientServiceManager
+from ambient.service_manager import AmbientServiceManager, ServiceControlError
 from tools.web_config import JPEG_SOI, ServerState, make_handler
 from http.server import ThreadingHTTPServer
 
@@ -126,6 +126,48 @@ def test_idle_release_cache(server_state, frame):
   assert server_state.raw_frame is not None
   server_state.release_cache()
   assert server_state.raw_frame is None
+
+
+def test_shutdown_pi_stops_ambient(server_state, monkeypatch):
+  server_state.ambient_service.start()
+  assert server_state.ambient_service.running is True
+  called = []
+
+  def fake_shutdown():
+    called.append(True)
+
+  monkeypatch.setattr(server_state, "_run_shutdown_command", fake_shutdown)
+  result = server_state.shutdown_pi()
+  assert result["ok"] is True
+  assert server_state.ambient_service.running is False
+  time.sleep(0.7)
+  assert called == [True]
+
+
+def test_run_shutdown_command_permission_denied(server_state, monkeypatch):
+  import subprocess
+
+  def fake_run(*args, **kwargs):
+    raise subprocess.CalledProcessError(1, "sudo", stderr="permission denied")
+
+  monkeypatch.setattr(subprocess, "run", fake_run)
+  with pytest.raises(ServiceControlError, match="Shutdown failed"):
+    server_state._run_shutdown_command()
+
+
+def test_shutdown_endpoint(server_state, monkeypatch):
+  port = 18766
+  monkeypatch.setattr(server_state, "_run_shutdown_command", lambda: None)
+  server = _start_test_server(server_state, port)
+  base = f"http://127.0.0.1:{port}"
+  try:
+    req = Request(base + "/api/server/shutdown", method="POST", data=b"")
+    with urlopen(req) as r:
+      data = json.loads(r.read())
+      assert data["ok"] is True
+  finally:
+    server.shutdown()
+    server.server_close()
 
 
 def _start_test_server(state, port: int) -> ThreadingHTTPServer:

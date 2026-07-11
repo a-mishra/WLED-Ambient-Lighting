@@ -58,6 +58,10 @@ Open `http://<pi-ip>:8080` from a phone or PC on the same network.
    - Panel 2 overlays sampling bands (cyan = sampling, red = disabled fill) when `show_sampling_bands` is on
 5. Tune other settings on the Camera / Color / WLED / Processing tabs
 
+Every save (tab **Save** button or **Save calibration**) opens a confirmation dialog showing the exact changes before they are written to `config.yaml`.
+
+The service bar includes **Shutdown Pi**, which stops ambient and powers off the Pi. Requires passwordless sudo for `/sbin/shutdown` — see [README troubleshooting](../README.md#troubleshooting).
+
 The server does not touch the camera until you click Capture. With `--exit-on-idle`, it shuts down automatically after 5 minutes of no browser activity.
 
 > Config changes saved via the web UI take effect in `main.py` after you restart it.

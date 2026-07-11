@@ -514,6 +514,39 @@ def patch_warnings(config: dict, patch: dict) -> list[str]:
   return warnings
 
 
+def _values_equal(a: Any, b: Any) -> bool:
+  if type(a) is not type(b):
+    return False
+  if isinstance(a, dict):
+    if set(a.keys()) != set(b.keys()):
+      return False
+    return all(_values_equal(a[k], b[k]) for k in a)
+  if isinstance(a, (list, tuple)):
+    if len(a) != len(b):
+      return False
+    return all(_values_equal(x, y) for x, y in zip(a, b))
+  return a == b
+
+
+def compute_config_diff(
+  before: dict,
+  after: dict,
+  prefix: str = "",
+) -> list[dict[str, Any]]:
+  """Return list of {path, from, to} for leaf values that differ."""
+  changes: list[dict[str, Any]] = []
+  all_keys = set(before.keys()) | set(after.keys())
+  for key in sorted(all_keys):
+    path = f"{prefix}.{key}" if prefix else key
+    old_val = before.get(key)
+    new_val = after.get(key)
+    if isinstance(old_val, dict) and isinstance(new_val, dict):
+      changes.extend(compute_config_diff(old_val, new_val, path))
+    elif not _values_equal(old_val, new_val):
+      changes.append({"path": path, "from": old_val, "to": new_val})
+  return changes
+
+
 def save_config_atomic(config: dict, path: str | Path) -> None:
   """Write config atomically (temp file + rename)."""
   config_path = Path(path)

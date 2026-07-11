@@ -13,6 +13,7 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import subprocess
 import sys
 import threading
 import time
@@ -116,7 +117,30 @@ _HTML_PAGE = r"""<!DOCTYPE html>
     border-radius: 4px; cursor: pointer; font-size: 0.85rem;
   }
   #service-bar button.primary { background: #e94560; }
+  #service-bar button.danger { background: #6a040f; }
   #service-bar button:disabled { opacity: 0.45; cursor: not-allowed; }
+  #confirm-modal {
+    display: none; position: fixed; inset: 0; z-index: 1000;
+    background: rgba(0,0,0,0.65); align-items: center; justify-content: center; padding: 16px;
+  }
+  #confirm-modal.open { display: flex; }
+  #confirm-modal .dialog {
+    background: #16213e; border-radius: 8px; max-width: 520px; width: 100%;
+    padding: 16px; border: 1px solid #444; max-height: 85vh; display: flex; flex-direction: column;
+  }
+  #confirm-modal h2 { margin: 0 0 12px; font-size: 1rem; }
+  #confirm-modal .body { overflow-y: auto; flex: 1; margin-bottom: 12px; font-size: 0.85rem; }
+  #confirm-modal .diff-table { width: 100%; border-collapse: collapse; font-family: monospace; font-size: 0.8rem; }
+  #confirm-modal .diff-table td { padding: 6px 8px; border-bottom: 1px solid #333; vertical-align: top; word-break: break-all; }
+  #confirm-modal .diff-table .path { color: #52b788; white-space: nowrap; }
+  #confirm-modal .actions { display: flex; gap: 8px; justify-content: flex-end; }
+  #confirm-modal .actions button {
+    border: none; padding: 8px 16px; border-radius: 4px; cursor: pointer; font-size: 0.9rem;
+  }
+  #confirm-modal .actions .cancel { background: #533483; color: #fff; }
+  #confirm-modal .actions .confirm { background: #e94560; color: #fff; }
+  #confirm-modal .actions .confirm.danger { background: #6a040f; }
+  #confirm-modal .warn-text { color: #f4a261; margin: 0 0 10px; }
 </style>
 </head>
 <body>
@@ -125,6 +149,7 @@ _HTML_PAGE = r"""<!DOCTYPE html>
   <span><span id="svc-dot" class="status-dot off"></span><span id="svc-label">Ambient: checking…</span></span>
   <button id="svc-start" class="primary" onclick="startAmbient()">Start ambient</button>
   <button id="svc-stop" onclick="stopAmbient()">Stop ambient</button>
+  <button id="svc-shutdown" class="danger" onclick="shutdownPi()">Shutdown Pi</button>
 </div>
 <nav id="tabs">
   <button class="active" data-tab="preview">Preview</button>
@@ -177,6 +202,16 @@ _HTML_PAGE = r"""<!DOCTYPE html>
   <div id="tab-wled" class="tab"><div class="form-section" id="form-wled"></div></div>
   <div id="tab-processing" class="tab"><div class="form-section" id="form-processing"></div></div>
 </main>
+<div id="confirm-modal" role="dialog" aria-modal="true">
+  <div class="dialog">
+    <h2 id="confirm-title">Confirm</h2>
+    <div class="body" id="confirm-body"></div>
+    <div class="actions">
+      <button type="button" class="cancel" id="confirm-cancel">Cancel</button>
+      <button type="button" class="confirm" id="confirm-ok">Confirm</button>
+    </div>
+  </div>
+</div>
 <script>
 let config = {};
 let clickPoints = [];
@@ -226,6 +261,70 @@ async function stopAmbient() {
   } catch (e) {
     showBanner(e.data?.message || 'Stop failed', 'err');
     await refreshServiceStatus();
+  }
+}
+function formatValue(v) {
+  if (v === undefined) return '(unset)';
+  if (typeof v === 'object') return JSON.stringify(v);
+  return String(v);
+}
+function valuesEqual(a, b) {
+  return JSON.stringify(a) === JSON.stringify(b);
+}
+function diffConfig(oldObj, newObj, prefix) {
+  const changes = [];
+  const keys = new Set([...Object.keys(oldObj || {}), ...Object.keys(newObj || {})]);
+  for (const key of [...keys].sort()) {
+    const path = prefix ? prefix + '.' + key : key;
+    const oldVal = oldObj ? oldObj[key] : undefined;
+    const newVal = newObj ? newObj[key] : undefined;
+    if (oldVal && newVal && typeof oldVal === 'object' && typeof newVal === 'object' && !Array.isArray(oldVal)) {
+      changes.push(...diffConfig(oldVal, newVal, path));
+    } else if (!valuesEqual(oldVal, newVal)) {
+      changes.push({ path, from: oldVal, to: newVal });
+    }
+  }
+  return changes;
+}
+function renderDiffTable(changes) {
+  if (!changes.length) return '<p>No changes.</p>';
+  let html = '<table class="diff-table"><tr><th>Setting</th><th>Current</th><th>New</th></tr>';
+  for (const c of changes) {
+    html += `<tr><td class="path">${c.path}</td><td>${formatValue(c.from)}</td><td>${formatValue(c.to)}</td></tr>`;
+  }
+  return html + '</table>';
+}
+let _confirmResolve = null;
+function showConfirmModal(title, bodyHtml, confirmLabel, danger) {
+  return new Promise((resolve) => {
+    _confirmResolve = resolve;
+    document.getElementById('confirm-title').textContent = title;
+    document.getElementById('confirm-body').innerHTML = bodyHtml;
+    const okBtn = document.getElementById('confirm-ok');
+    okBtn.textContent = confirmLabel || 'Confirm';
+    okBtn.className = 'confirm' + (danger ? ' danger' : '');
+    document.getElementById('confirm-modal').classList.add('open');
+  });
+}
+function closeConfirmModal(result) {
+  document.getElementById('confirm-modal').classList.remove('open');
+  if (_confirmResolve) { _confirmResolve(result); _confirmResolve = null; }
+}
+document.getElementById('confirm-cancel').addEventListener('click', () => closeConfirmModal(false));
+document.getElementById('confirm-ok').addEventListener('click', () => closeConfirmModal(true));
+async function shutdownPi() {
+  const body = '<p class="warn-text"><strong>Warning:</strong> This will power off the Raspberry Pi.</p>'
+    + '<ul><li>Ambient lighting will be stopped first</li>'
+    + '<li>The web UI will become unreachable</li>'
+    + '<li>You must power the Pi on again manually</li></ul>';
+  const ok = await showConfirmModal('Shutdown Raspberry Pi?', body, 'Shutdown Pi', true);
+  if (!ok) return;
+  try {
+    showBanner('Shutting down Pi…', 'warn');
+    await api('POST', '/api/server/shutdown');
+    showBanner('Shutdown initiated — Pi is powering off', 'warn');
+  } catch (e) {
+    showBanner(e.data?.message || 'Shutdown failed (check sudoers for /sbin/shutdown)', 'err');
   }
 }
 const ts = () => Date.now();
@@ -418,6 +517,22 @@ function loadSavedPoints() {
 }
 async function saveCalibration() {
   if (clickPoints.length !== 4) { showBanner('Click exactly 4 corners first (' + clickPoints.length + '/4).', 'err'); return; }
+  const oldPts = config.perspective?.points || [];
+  const changes = [];
+  for (let i = 0; i < 4; i++) {
+    const oldP = oldPts[i];
+    const newP = clickPoints[i];
+    if (!valuesEqual(oldP, newP)) {
+      changes.push({ path: 'perspective.points[' + i + ']', from: oldP, to: newP });
+    }
+  }
+  if (!changes.length) { showBanner('No changes to save'); return; }
+  const ok = await showConfirmModal(
+    'Save calibration?',
+    '<p>The following corner coordinates will be written to config.yaml:</p>' + renderDiffTable(changes),
+    'Confirm save'
+  );
+  if (!ok) return;
   try {
     const meta = await api('POST', '/api/calibration', { points: clickPoints });
     refreshImages();
@@ -497,11 +612,22 @@ function readSection(section, schema) {
 }
 async function saveSection(section) {
   try {
-    const schema = (await api('GET', '/api/config')).schema[section];
-    const body = {}; body[section] = readSection(section, schema);
-    const res = await api('PATCH', '/api/config', body);
-    config = res.config;
-    if (res.warnings?.length) showBanner(res.warnings.join(' '), 'warn');
+    const res = await api('GET', '/api/config');
+    const schema = res.schema[section];
+    const newSection = readSection(section, schema);
+    const oldSection = config[section] || {};
+    const changes = diffConfig(oldSection, newSection, section);
+    if (!changes.length) { showBanner('No changes to save'); return; }
+    const ok = await showConfirmModal(
+      'Save ' + section + ' settings?',
+      '<p>The following changes will be written to config.yaml:</p>' + renderDiffTable(changes),
+      'Confirm save'
+    );
+    if (!ok) return;
+    const body = {}; body[section] = newSection;
+    const patchRes = await api('PATCH', '/api/config', body);
+    config = patchRes.config;
+    if (patchRes.warnings?.length) showBanner(patchRes.warnings.join(' '), 'warn');
     else if (section === 'perspective' || section === 'camera' || section === 'color' || section === 'wled') {
       showBanner(section + ' saved — click Reprocess on Preview tab (restart main.py for live output)');
     } else showBanner(section + ' saved');
@@ -608,6 +734,43 @@ class ServerState:
     with self.lock:
       self.reload_config()
       return self.ambient_service.stop()
+
+  def _run_shutdown_command(self) -> None:
+    """Run sudo shutdown. Raises ServiceControlError on failure."""
+    try:
+      subprocess.run(
+        ["sudo", "shutdown", "-h", "now"],
+        timeout=10,
+        check=True,
+        capture_output=True,
+        text=True,
+      )
+    except FileNotFoundError as exc:
+      raise ServiceControlError("sudo or shutdown not found") from exc
+    except subprocess.CalledProcessError as exc:
+      detail = (exc.stderr or exc.stdout or "").strip() or str(exc)
+      raise ServiceControlError(f"Shutdown failed: {detail}") from exc
+    except subprocess.TimeoutExpired as exc:
+      raise ServiceControlError("Shutdown command timed out") from exc
+
+  def shutdown_pi(self) -> dict:
+    """Stop ambient if running, then schedule Pi power-off."""
+    with self.lock:
+      try:
+        if self.ambient_service.status().get("running"):
+          self.ambient_service.stop()
+      except ServiceControlError:
+        logger.warning("Could not stop ambient before Pi shutdown", exc_info=True)
+
+    def _delayed_shutdown() -> None:
+      time.sleep(0.5)
+      try:
+        self._run_shutdown_command()
+      except ServiceControlError as exc:
+        logger.error("%s", exc)
+
+    threading.Thread(target=_delayed_shutdown, daemon=True, name="PiShutdown").start()
+    return {"ok": True, "message": "Shutting down…"}
 
   def _store_preview(self, raw: np.ndarray, preview: PreviewResult, capture_ms: float = 0.0) -> None:
     self.raw_frame = raw
@@ -770,6 +933,8 @@ def make_handler(state: ServerState):
         self._handle_ambient_start()
       elif self.command == "POST" and path == "/api/ambient/stop":
         self._handle_ambient_stop()
+      elif self.command == "POST" and path == "/api/server/shutdown":
+        self._handle_shutdown()
       elif self.command == "GET" and path == "/api/config":
         _json_response(self, 200, {
           "config": extract_editable_config(state.config),
@@ -867,6 +1032,10 @@ def make_handler(state: ServerState):
         _json_response(self, 200, result)
       except ServiceControlError as exc:
         _json_response(self, 500, {"error": "service", "message": str(exc)})
+
+    def _handle_shutdown(self) -> None:
+      result = state.shutdown_pi()
+      _json_response(self, 200, result)
 
   return Handler
 

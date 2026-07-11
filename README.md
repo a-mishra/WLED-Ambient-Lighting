@@ -101,13 +101,17 @@ http://192.168.1.200:8080
 
 | Area | Tabs / controls |
 |------|-----------------|
-| **Service bar** (top) | **Start ambient** / **Stop ambient**, live status |
+| **Service bar** (top) | **Start ambient** / **Stop ambient**, **Shutdown Pi**, live status |
 | **Preview** | Capture frame, click or type TV corners, save calibration, reprocess preview |
 | **Perspective** | Warp output resolution |
 | **Camera** | Resolution, rgb_swap, exposure, gain |
 | **Color** | Band depth (horizontal/vertical), per-side sampling on/off, disabled fill, saturation, gamma, smoothing |
 | **WLED** | IP, port, strip start/direction, LEDs per side |
 | **Processing** | FPS, logging, benchmark, systemd unit name |
+
+Saving any tab or calibration shows a **confirmation dialog** listing exactly what will change in `config.yaml` before writing.
+
+**Shutdown Pi** stops ambient first, then runs `sudo shutdown -h now`. The Pi user needs passwordless sudo for `/sbin/shutdown` (see Troubleshooting).
 
 ### Typical workflow
 
@@ -197,6 +201,7 @@ Other flags: `--sim-camera`, `--sim-wled`, `--config path/to/config.yaml`.
 | Capture fails / camera busy | **Stop ambient** in web UI, or `systemctl --user stop wled-ambient.service` |
 | Web UI not reachable after reboot | `systemctl --user status wled-web-config.service`; re-run `install-systemd.sh` |
 | HyperHDR holds camera | Stop HyperHDR or disable its camera use in `/boot/firmware/config.txt` |
+| Shutdown Pi fails from web UI | Allow passwordless shutdown: `sudo visudo` and add `a-mishra ALL=(ALL) NOPASSWD: /sbin/shutdown` (replace username) |
 
 Logs: `app.log` in the project directory (path set in `processing.log_file`).
 
