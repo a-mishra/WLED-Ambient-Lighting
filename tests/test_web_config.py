@@ -14,6 +14,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from ambient.config_schema import CameraBusyError
+from ambient.service_manager import AmbientServiceManager
 from tools.web_config import JPEG_SOI, ServerState, make_handler
 from http.server import ThreadingHTTPServer
 
@@ -43,14 +44,39 @@ def frame():
   return _synthetic_frame()
 
 
+class _FakeAmbientService:
+  def __init__(self) -> None:
+    self.running = False
+
+  def reload_config(self, config: dict) -> None:
+    pass
+
+  def status(self) -> dict:
+    return {
+      "running": self.running,
+      "backend": "test",
+      "state": "active" if self.running else "inactive",
+    }
+
+  def start(self) -> dict:
+    self.running = True
+    return {"ok": True, **self.status()}
+
+  def stop(self) -> dict:
+    self.running = False
+    return {"ok": True, **self.status()}
+
+
 @pytest.fixture
 def server_state(frame, tmp_path):
   import shutil
   cfg_copy = tmp_path / "config.yaml"
   shutil.copy(CONFIG_PATH, cfg_copy)
+  fake_ambient = _FakeAmbientService()
   state = ServerState(
     cfg_copy,
     camera_factory=lambda c: _FakeCamera(c, frame=frame),
+    service_manager=fake_ambient,  # type: ignore[arg-type]
   )
   return state
 
@@ -120,6 +146,17 @@ def test_http_endpoints(server_state, frame):
     with urlopen(base + "/api/status") as r:
       data = json.loads(r.read())
       assert data["has_cache"] is False
+      assert data["ambient"]["running"] is False
+
+    req = Request(base + "/api/ambient/start", method="POST", data=b"")
+    with urlopen(req) as r:
+      st = json.loads(r.read())
+      assert st["running"] is True
+
+    req = Request(base + "/api/ambient/stop", method="POST", data=b"")
+    with urlopen(req) as r:
+      st = json.loads(r.read())
+      assert st["running"] is False
 
     req = Request(base + "/api/preview/capture", method="POST", data=b"")
     with urlopen(req) as r:

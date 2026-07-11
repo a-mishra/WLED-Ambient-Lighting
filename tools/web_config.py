@@ -38,6 +38,7 @@ from ambient.config_schema import (
 )
 from ambient.factory import create_camera
 from ambient.pipeline_preview import PreviewResult, encode_jpeg, process_frame
+from ambient.service_manager import AmbientServiceManager, ServiceControlError
 
 logger = logging.getLogger(__name__)
 
@@ -99,10 +100,32 @@ _HTML_PAGE = r"""<!DOCTYPE html>
   .cal-manual input { width: 72px; padding: 6px; border-radius: 4px; border: 1px solid #444; background: #0f3460; color: #eee; }
   .cal-manual button { background: #533483; color: #fff; border: none; padding: 8px 14px; border-radius: 4px; cursor: pointer; margin-top: 8px; }
   .form-note { font-size: 0.85rem; color: #aaa; margin: 8px 0; }
+  #service-bar {
+    display: flex; flex-wrap: wrap; align-items: center; gap: 10px;
+    padding: 10px 16px; background: #0f3460; border-bottom: 1px solid #333;
+    font-size: 0.9rem;
+  }
+  #service-bar .status-dot {
+    width: 10px; height: 10px; border-radius: 50%; display: inline-block;
+    background: #666; margin-right: 4px;
+  }
+  #service-bar .status-dot.on { background: #52b788; }
+  #service-bar .status-dot.off { background: #e94560; }
+  #service-bar button {
+    background: #533483; color: #fff; border: none; padding: 6px 12px;
+    border-radius: 4px; cursor: pointer; font-size: 0.85rem;
+  }
+  #service-bar button.primary { background: #e94560; }
+  #service-bar button:disabled { opacity: 0.45; cursor: not-allowed; }
 </style>
 </head>
 <body>
 <header><h1>WLED Ambient Lighting — Web Config</h1></header>
+<div id="service-bar">
+  <span><span id="svc-dot" class="status-dot off"></span><span id="svc-label">Ambient: checking…</span></span>
+  <button id="svc-start" class="primary" onclick="startAmbient()">Start ambient</button>
+  <button id="svc-stop" onclick="stopAmbient()">Stop ambient</button>
+</div>
 <nav id="tabs">
   <button class="active" data-tab="preview">Preview</button>
   <button data-tab="perspective">Perspective</button>
@@ -157,6 +180,54 @@ _HTML_PAGE = r"""<!DOCTYPE html>
 <script>
 let config = {};
 let clickPoints = [];
+let svcPollTimer = null;
+async function refreshServiceStatus() {
+  try {
+    const st = await api('GET', '/api/ambient/status');
+    const dot = document.getElementById('svc-dot');
+    const label = document.getElementById('svc-label');
+    const startBtn = document.getElementById('svc-start');
+    const stopBtn = document.getElementById('svc-stop');
+    const running = !!st.running;
+    dot.className = 'status-dot ' + (running ? 'on' : 'off');
+    let text = running ? 'Ambient: running' : 'Ambient: stopped';
+    if (st.backend) text += ' (' + st.backend + ')';
+    if (st.pid) text += ' pid ' + st.pid;
+    if (st.unit) text += ' [' + st.unit + ']';
+    label.textContent = text;
+    startBtn.disabled = running;
+    stopBtn.disabled = !running;
+  } catch (e) {
+    document.getElementById('svc-label').textContent = 'Ambient: status unavailable';
+  }
+}
+function startServicePoll() {
+  refreshServiceStatus();
+  if (svcPollTimer) clearInterval(svcPollTimer);
+  svcPollTimer = setInterval(refreshServiceStatus, 5000);
+}
+async function startAmbient() {
+  try {
+    showBanner('Starting ambient…', 'warn');
+    const res = await api('POST', '/api/ambient/start');
+    await refreshServiceStatus();
+    showBanner(res.already_running ? 'Ambient already running' : 'Ambient started');
+  } catch (e) {
+    showBanner(e.data?.message || 'Start failed', 'err');
+    await refreshServiceStatus();
+  }
+}
+async function stopAmbient() {
+  try {
+    showBanner('Stopping ambient…', 'warn');
+    const res = await api('POST', '/api/ambient/stop');
+    await refreshServiceStatus();
+    showBanner(res.already_stopped ? 'Ambient already stopped' : 'Ambient stopped — camera free for Capture');
+  } catch (e) {
+    showBanner(e.data?.message || 'Stop failed', 'err');
+    await refreshServiceStatus();
+  }
+}
 const ts = () => Date.now();
 function showBanner(text, kind='ok') {
   const el = document.getElementById('banner');
@@ -448,6 +519,7 @@ async function init() {
       if (e.touches.length) onRawPointer(e.touches[0]);
     }, { passive: false });
     window.addEventListener('resize', () => { syncCanvasSize(); drawMarkers(); });
+    startServicePoll();
   } catch (e) { showBanner('Failed to load config', 'err'); }
 }
 init();
@@ -463,6 +535,7 @@ class ServerState:
     self,
     config_path: Path,
     camera_factory: Callable[[dict], Any] | None = None,
+    service_manager: AmbientServiceManager | None = None,
   ) -> None:
     self.config_path = config_path
     self.config = load_config(config_path)
@@ -476,6 +549,14 @@ class ServerState:
     self.jpeg_overlay: bytes | None = None
     self.capture_ms: float = 0.0
     self._shutdown_server: Callable[[], None] | None = None
+    self._subprocess_holder: dict[str, Any] = {"proc": None}
+    project_root = config_path.resolve().parent.parent
+    self.ambient_service = service_manager or AmbientServiceManager(
+      project_root,
+      self.config,
+      config_path,
+      self._subprocess_holder,
+    )
 
   def touch(self) -> None:
     self.last_request_time = time.monotonic()
@@ -495,6 +576,22 @@ class ServerState:
 
   def reload_config(self) -> None:
     self.config = load_config(self.config_path)
+    self.ambient_service.reload_config(self.config)
+
+  def ambient_status(self) -> dict:
+    with self.lock:
+      self.reload_config()
+      return self.ambient_service.status()
+
+  def ambient_start(self) -> dict:
+    with self.lock:
+      self.reload_config()
+      return self.ambient_service.start()
+
+  def ambient_stop(self) -> dict:
+    with self.lock:
+      self.reload_config()
+      return self.ambient_service.stop()
 
   def _store_preview(self, raw: np.ndarray, preview: PreviewResult, capture_ms: float = 0.0) -> None:
     self.raw_frame = raw
@@ -648,7 +745,14 @@ def make_handler(state: ServerState):
         _json_response(self, 200, {
           "idle": True,
           "has_cache": state.preview is not None,
+          "ambient": state.ambient_status(),
         })
+      elif self.command == "GET" and path == "/api/ambient/status":
+        _json_response(self, 200, state.ambient_status())
+      elif self.command == "POST" and path == "/api/ambient/start":
+        self._handle_ambient_start()
+      elif self.command == "POST" and path == "/api/ambient/stop":
+        self._handle_ambient_stop()
       elif self.command == "GET" and path == "/api/config":
         _json_response(self, 200, {
           "config": extract_editable_config(state.config),
@@ -732,6 +836,20 @@ def make_handler(state: ServerState):
         _json_response(self, 200, meta)
       except ConfigValidationError as exc:
         _json_response(self, 400, {"error": "validation", "fields": exc.errors})
+
+    def _handle_ambient_start(self) -> None:
+      try:
+        result = state.ambient_start()
+        _json_response(self, 200, result)
+      except ServiceControlError as exc:
+        _json_response(self, 500, {"error": "service", "message": str(exc)})
+
+    def _handle_ambient_stop(self) -> None:
+      try:
+        result = state.ambient_stop()
+        _json_response(self, 200, result)
+      except ServiceControlError as exc:
+        _json_response(self, 500, {"error": "service", "message": str(exc)})
 
   return Handler
 

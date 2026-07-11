@@ -80,6 +80,14 @@ def get_editable_schema() -> dict:
       "log_file": {"type": "string", "label": "Log file path"},
       "benchmark_mode": {"type": "bool", "label": "Benchmark mode"},
       "opencv_threads": {"type": "int", "label": "OpenCV threads", "min": 1, "max": 8},
+      "ambient_service_unit": {
+        "type": "string",
+        "label": "Ambient systemd unit (empty = subprocess mode)",
+      },
+      "ambient_use_systemd_user": {
+        "type": "bool",
+        "label": "Use systemctl --user for ambient service",
+      },
     },
   }
 
@@ -354,6 +362,10 @@ def validate_patch(patch: dict) -> dict:
         v = _validate_int(proc["opencv_threads"], "processing.opencv_threads", 1, 8, errors)
         if v is not None:
           out["opencv_threads"] = v
+      if "ambient_service_unit" in proc:
+        out["ambient_service_unit"] = str(proc["ambient_service_unit"]).strip()
+      if "ambient_use_systemd_user" in proc:
+        out["ambient_use_systemd_user"] = bool(proc["ambient_use_systemd_user"])
       if out:
         validated["processing"] = out
 

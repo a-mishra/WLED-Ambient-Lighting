@@ -1,0 +1,16 @@
+[Unit]
+Description=WLED TV Ambient Lighting (main pipeline)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=@PROJECT_DIR@
+ExecStart=@PROJECT_DIR@/.venv/bin/python main.py --config @PROJECT_DIR@/config/config.yaml
+Restart=on-failure
+RestartSec=5
+KillSignal=SIGINT
+TimeoutStopSec=20
+
+[Install]
+WantedBy=default.target

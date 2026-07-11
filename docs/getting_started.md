@@ -114,6 +114,33 @@ Output looks like:
 python main.py --config /path/to/my_config.yaml
 ```
 
+### Autostart web UI on boot (recommended on Pi)
+
+Install user-level systemd units. The **web config server** starts automatically on boot; the **ambient pipeline** is started/stopped from the browser.
+
+```bash
+cd ~/projects/WLED-Ambient-Lighting
+bash scripts/install-systemd.sh
+```
+
+Open `http://<pi-ip>:8080` and use **Start ambient** / **Stop ambient** in the top bar.
+
+| Service | Autostart on boot? | Purpose |
+|---|---|---|
+| `wled-web-config.service` | Yes | Web UI on port 8080 |
+| `wled-ambient.service` | No | Camera → WLED pipeline (`main.py`) |
+
+**Stop ambient** before clicking **Capture** in the web UI (only one process can use the camera). After saving config changes, **Stop** then **Start** ambient to reload.
+
+Manual commands:
+
+```bash
+systemctl --user status wled-web-config.service
+systemctl --user start wled-ambient.service
+systemctl --user stop wled-ambient.service
+journalctl --user -u wled-ambient.service -f
+```
+
 ---
 
 ## 5. Run the Tests

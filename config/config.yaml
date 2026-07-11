@@ -52,6 +52,8 @@ processing:
   log_file: app.log
   benchmark_mode: false        # logs per-stage timing every frame when true
   opencv_threads: 1            # cv2.setNumThreads — 1 is optimal for small ops on Pi Zero 2W
+  ambient_service_unit: wled-ambient.service   # systemd unit for Start/Stop in web UI; "" = subprocess
+  ambient_use_systemd_user: true               # use systemctl --user (install-systemd.sh)
 
 simulator:
   camera:

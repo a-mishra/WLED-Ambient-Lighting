@@ -13,6 +13,9 @@ pip install opencv-python numpy PyYAML scipy picamera2 pygame
 # Edit your WLED IP, LED count, and strip routing (start corner + direction)
 nano config/config.yaml
 
+# Optional: autostart web UI on boot + Start/Stop ambient from browser
+bash scripts/install-systemd.sh
+
 # Calibrate camera perspective (point camera at TV)
 # On Pi OS Lite (headless) — use the web UI from a phone or PC browser:
 python -m tools.web_config --port 8080 --exit-on-idle
